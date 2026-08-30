@@ -16,16 +16,16 @@ jobs:
       github.event.workflow_run.event == 'push'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v6
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/build-push-action@v7
         with:
           context: .
           outputs: type=oci,dest=${{ runner.temp }}/local-llm-router.tar
           tags: local-llm-router:${{ github.event.workflow_run.head_sha }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: local-llm-router-${{ github.event.workflow_run.head_sha }}
           path: ${{ runner.temp }}/local-llm-router.tar
