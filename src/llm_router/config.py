@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -15,6 +16,9 @@ class Settings(BaseSettings):
     admission_timeout_seconds: float = Field(default=0.25, gt=0)
     quota_requests_per_minute: int = Field(default=120, ge=1)
     external_fallback_enabled: bool = False
+    backend: Literal["mock", "vllm"] = "mock"
+    vllm_base_url: str = "http://127.0.0.1:8001"
+    backend_timeout_seconds: float = Field(default=60.0, gt=0)
     registry_path: str = "config/registry.yaml"
     routing_policy_version: str = "v1"
     cache_enabled: bool = True

@@ -1,7 +1,7 @@
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 
 
 class TaskClass(StrEnum):
@@ -41,12 +41,6 @@ class ChatCompletionRequest(BaseModel):
     temperature: float = Field(default=0.0, ge=0.0, le=2.0)
     stream: bool = False
     routing: RoutingOptions = Field(default_factory=RoutingOptions)
-
-    @model_validator(mode="after")
-    def reject_streaming_for_initial_slice(self) -> "ChatCompletionRequest":
-        if self.stream:
-            raise ValueError("streaming is not available in the initial control-plane slice")
-        return self
 
     @property
     def prompt(self) -> str:
