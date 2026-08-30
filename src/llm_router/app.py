@@ -46,8 +46,20 @@ from llm_router.models import (
     Usage,
 )
 from llm_router.observability import Metrics
+from llm_router.redis_state import RedisCacheStore, RedisFixedWindowQuota, RedisLike
 from llm_router.registry import Registry, RegistryError, catalog_revisions, load_registry
 from llm_router.routing import NoEligibleModelError, Router, default_model_profiles
+
+
+def _redis_client(settings: Settings) -> RedisLike | None:
+    """Build a shared-state client when a Redis URL is configured."""
+
+    if not settings.redis_url:
+        return None
+    from redis.asyncio import Redis  # imported lazily so the extra stays optional
+
+    client: RedisLike = Redis.from_url(settings.redis_url)
+    return client
 
 
 def _load_catalog(path: str) -> Registry | None:
@@ -65,6 +77,7 @@ def create_app(
     metrics: Metrics | None = None,
     cache_store: CacheStore | None = None,
     registry: Registry | None = None,
+    redis_client: RedisLike | None = None,
 ) -> FastAPI:
     runtime_settings = settings or get_settings()
     catalog = registry if registry is not None else _load_catalog(runtime_settings.registry_path)
@@ -81,7 +94,13 @@ def create_app(
         runtime_settings.max_concurrency,
         runtime_settings.admission_timeout_seconds,
     )
+    shared_state = redis_client if redis_client is not None else _redis_client(runtime_settings)
     quota = SlidingWindowQuota(runtime_settings.quota_requests_per_minute)
+    shared_quota = (
+        RedisFixedWindowQuota(shared_state, runtime_settings.quota_requests_per_minute)
+        if shared_state is not None
+        else None
+    )
     engine_client = (
         httpx.AsyncClient() if backend is None and runtime_settings.backend == "vllm" else None
     )
@@ -95,9 +114,17 @@ def create_app(
         else MockInferenceBackend()
     )
     telemetry = metrics if metrics is not None else Metrics()
-    exact_cache: CacheStore = cache_store or InMemoryCacheStore(
-        max_entries=runtime_settings.cache_max_entries,
-        ttl_seconds=runtime_settings.cache_ttl_seconds,
+    exact_cache: CacheStore = (
+        cache_store
+        or (
+            RedisCacheStore(shared_state, ttl_seconds=runtime_settings.cache_ttl_seconds)
+            if shared_state is not None
+            else None
+        )
+        or InMemoryCacheStore(
+            max_entries=runtime_settings.cache_max_entries,
+            ttl_seconds=runtime_settings.cache_ttl_seconds,
+        )
     )
     semantic_cache = SemanticCache(threshold=runtime_settings.semantic_similarity_threshold)
     decision_cache = RouterDecisionCache(policy_version=policy_version)
@@ -357,6 +384,14 @@ def create_app(
             scope = semantic_cache.scope(payload, tenant=tenant, model_revision=catalog_version)
             semantic_cache.store(scope, prompt, entry)
 
+    async def _consume_quota(subject: str) -> None:
+        if shared_quota is None:
+            await quota.consume(subject)
+            return
+        window = int(time.time() // 60)
+        if not await shared_quota.consume(subject, window=window):
+            raise QuotaExceededError("request quota exceeded")
+
     def _route_headers(decision: RouteDecision, cache_state: str) -> dict[str, str]:
         headers = {
             "X-Cache": cache_state,
@@ -427,7 +462,7 @@ def create_app(
         subject: str = Depends(authenticate),
     ) -> ChatCompletionResponse | StreamingResponse:
         started = time.perf_counter()
-        await quota.consume(subject)
+        await _consume_quota(subject)
         prompt = payload.prompt
         cache_key = build_cache_key(
             payload, tenant=subject, model_revision=catalog_version, prompt=prompt
