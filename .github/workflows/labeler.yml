@@ -26,4 +26,4 @@ jobs:
           gh label create "python" --color "3572A5" --force --repo "$REPOSITORY"
           gh label create "javascript" --color "F1E05A" --force --repo "$REPOSITORY"
           gh label create "github-actions" --color "2088FF" --force --repo "$REPOSITORY"
-      - uses: actions/labeler@v6
+      - uses: actions/labeler@v7
