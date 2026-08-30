@@ -89,8 +89,10 @@ class Router:
             TaskClass.GENERAL,
         )
 
-    def select(self, request: ChatCompletionRequest) -> RouteDecision:
-        task = self.classify_task(request)
+    def select(
+        self, request: ChatCompletionRequest, *, task: TaskClass | None = None
+    ) -> RouteDecision:
+        task = task if task is not None else self.classify_task(request)
         estimated_tokens = max(1, len(request.prompt) // 4) + request.max_tokens
 
         candidates = [
