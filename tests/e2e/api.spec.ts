@@ -126,3 +126,33 @@ test("publishes model cards and deployment rollback targets", async ({ request }
   );
   expect(current.rollback_target).toBe("deploy-0001");
 });
+
+test("streams an OpenAI-compatible chunk sequence", async ({ request }) => {
+  const response = await request.post("/v1/chat/completions", {
+    data: {
+      model: "auto",
+      messages: [{ role: "user", content: "Summarize this streaming probe" }],
+      stream: true,
+      routing: { privacy: "public" },
+    },
+  });
+
+  expect(response.status()).toBe(200);
+  expect(response.headers()["content-type"]).toContain("text/event-stream");
+
+  const body = await response.text();
+  expect(body.trimEnd().endsWith("data: [DONE]")).toBeTruthy();
+
+  const events = body
+    .split("\n")
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.replace(/^data:\s*/, ""))
+    .filter((payload) => payload !== "[DONE]")
+    .map((payload) => JSON.parse(payload));
+
+  expect(events[0].object).toBe("chat.completion.chunk");
+  expect(events[0].choices[0].delta.role).toBe("assistant");
+  expect(events.at(-1).choices[0].finish_reason).toBe("stop");
+  const text = events.map((event) => event.choices[0].delta.content ?? "").join("");
+  expect(text.length).toBeGreaterThan(0);
+});

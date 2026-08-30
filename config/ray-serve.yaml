@@ -1,0 +1,99 @@
+policy_version: v1
+applications:
+- model_id: small-specialist
+  model_revision: mock-small@sha256:dev
+  stage: production
+  model_loading_config:
+    model_id: small-specialist
+    model_source: registry://small-specialist@mock-small@sha256:dev
+    tokenizer: mock-small-tokenizer
+  accelerator_type: nvidia-l4
+  deployment_config:
+    autoscaling_config:
+      min_replicas: 1
+      max_replicas: 4
+      target_ongoing_requests: 8
+      upscale_delay_s: 10
+      downscale_delay_s: 300
+    max_ongoing_requests: 16
+    ray_actor_options:
+      num_gpus: 1
+      resources:
+        gpu_pool_nvidia-l4: 0.001
+  engine_kwargs:
+    max_model_len: 8192
+    tensor_parallel_size: 1
+    enable_prefix_caching: true
+    enable_chunked_prefill: true
+    quantization: awq
+    enable_lora: true
+    max_loras: 3
+    max_lora_rank: 32
+  lora_config:
+    dynamic_lora_loading_path: registry://adapters/small-specialist
+    adapters:
+    - id: claims-extraction-lora
+      revision: claims-lora@sha256:dev
+      domain: claims
+      quantized: true
+      stage: production
+    - id: claims-extraction-lora-next
+      revision: claims-lora@sha256:next
+      domain: claims
+      quantized: false
+      stage: staging
+    - id: support-classification-lora
+      revision: support-lora@sha256:dev
+      domain: support
+      quantized: false
+      stage: production
+- model_id: general-local
+  model_revision: mock-general@sha256:dev
+  stage: production
+  model_loading_config:
+    model_id: general-local
+    model_source: registry://general-local@mock-general@sha256:dev
+    tokenizer: mock-general-tokenizer
+  accelerator_type: nvidia-a10g
+  deployment_config:
+    autoscaling_config:
+      min_replicas: 1
+      max_replicas: 4
+      target_ongoing_requests: 8
+      upscale_delay_s: 10
+      downscale_delay_s: 300
+    max_ongoing_requests: 16
+    ray_actor_options:
+      num_gpus: 1
+      resources:
+        gpu_pool_nvidia-a10g: 0.001
+  engine_kwargs:
+    max_model_len: 32768
+    tensor_parallel_size: 1
+    enable_prefix_caching: true
+    enable_chunked_prefill: true
+- model_id: high-capability
+  model_revision: mock-high@sha256:dev
+  stage: production
+  model_loading_config:
+    model_id: high-capability
+    model_source: registry://high-capability@mock-high@sha256:dev
+    tokenizer: mock-high-tokenizer
+  accelerator_type: nvidia-a100
+  deployment_config:
+    autoscaling_config:
+      min_replicas: 0
+      max_replicas: 2
+      target_ongoing_requests: 8
+      upscale_delay_s: 10
+      downscale_delay_s: 60
+    max_ongoing_requests: 16
+    ray_actor_options:
+      num_gpus: 2
+      resources:
+        gpu_pool_nvidia-a100: 0.001
+  engine_kwargs:
+    max_model_len: 65536
+    tensor_parallel_size: 2
+    enable_prefix_caching: true
+    enable_chunked_prefill: true
