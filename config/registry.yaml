@@ -1,0 +1,181 @@
+# Governed model catalog. Requests may never introduce a model path or revision;
+# only records in this document are servable.
+policy:
+  version: v1
+  restricted_privacy_is_local_only: true
+  quality_floor: 0.0
+  resource_ceiling: 2.0
+  fallback_order:
+    - small-specialist
+    - general-local
+    - high-capability
+    - approved-external-fallback
+
+models:
+  - id: small-specialist
+    revision: mock-small@sha256:dev
+    tier: small-specialist
+    license: apache-2.0
+    tokenizer: mock-small-tokenizer
+    context_limit: 8192
+    quantization: awq
+    hardware:
+      accelerator: nvidia-l4
+      count: 1
+      minimum_memory_gb: 24
+    supported_tasks: [extraction, classification]
+    quality: 0.82
+    estimated_queue_ms: 12
+    cost_weight: 0.1
+    stage: production
+    intended_tasks: Field extraction and single-label classification.
+    limitations: Not evaluated for open-ended reasoning or multi-turn dialogue.
+    evaluation_references:
+      - benchmark:extraction-v3
+      - benchmark:classification-v2
+
+  - id: general-local
+    revision: mock-general@sha256:dev
+    tier: general-local
+    license: apache-2.0
+    tokenizer: mock-general-tokenizer
+    context_limit: 32768
+    quantization: none
+    hardware:
+      accelerator: nvidia-a10g
+      count: 1
+      minimum_memory_gb: 48
+    supported_tasks: [extraction, classification, rag, summarization, general]
+    quality: 0.89
+    estimated_queue_ms: 35
+    cost_weight: 0.35
+    stage: production
+    intended_tasks: Summarization, retrieval-augmented answers, and moderate reasoning.
+    limitations: Weaker than the high-capability tier on multi-step reasoning.
+    evaluation_references:
+      - benchmark:rag-v4
+
+  - id: high-capability
+    revision: mock-high@sha256:dev
+    tier: high-capability
+    license: apache-2.0
+    tokenizer: mock-high-tokenizer
+    context_limit: 65536
+    quantization: none
+    hardware:
+      accelerator: nvidia-a100
+      count: 2
+      minimum_memory_gb: 160
+      tensor_parallel_size: 2
+    supported_tasks: [extraction, classification, rag, summarization, reasoning, critique, general]
+    quality: 0.96
+    estimated_queue_ms: 90
+    cost_weight: 0.9
+    stage: production
+    intended_tasks: Complex reasoning, critique, and difficult fallback.
+    limitations: Highest GPU cost per request; reserve for genuinely hard work.
+    evaluation_references:
+      - benchmark:reasoning-v5
+
+  - id: approved-external-fallback
+    revision: external-policy-v1
+    tier: external-fallback
+    local: false
+    license: provider-terms
+    tokenizer: provider-managed
+    context_limit: 128000
+    supported_tasks: [extraction, classification, rag, summarization, reasoning, critique, general]
+    quality: 0.98
+    estimated_queue_ms: 45
+    cost_weight: 1.5
+    hardware:
+      accelerator: provider-managed
+      minimum_memory_gb: 1
+    stage: production
+    intended_tasks: Unsupported capability or temporary local saturation only.
+    limitations: Never eligible for private or restricted data.
+    evaluation_references:
+      - benchmark:external-parity-v1
+
+adapters:
+  - id: claims-extraction-lora
+    base_model_id: small-specialist
+    base_revision: mock-small@sha256:dev
+    adapter_revision: claims-lora@sha256:dev
+    domain: claims
+    intended_tasks: [extraction]
+    dataset_version: claims-2026-05
+    quantized: true
+    stage: production
+    benchmark:
+      quality_delta: 0.06
+      regressions: []
+
+  - id: support-classification-lora
+    base_model_id: small-specialist
+    base_revision: mock-small@sha256:dev
+    adapter_revision: support-lora@sha256:dev
+    domain: support
+    intended_tasks: [classification]
+    dataset_version: support-2026-04
+    stage: production
+    benchmark:
+      quality_delta: 0.04
+      regressions: []
+
+  - id: claims-extraction-lora-next
+    base_model_id: small-specialist
+    base_revision: mock-small@sha256:dev
+    adapter_revision: claims-lora@sha256:next
+    domain: claims
+    intended_tasks: [extraction]
+    dataset_version: claims-2026-06
+    stage: staging
+    benchmark:
+      quality_delta: 0.02
+      regressions: []
+
+benchmarks:
+  - id: extraction-v3
+    dataset_version: extraction-2026-05
+    workload_version: steady-32
+    hardware: nvidia-l4
+    driver: "570.86"
+    container_digest: sha256:mock-container
+    engine_revision: mock-engine-0.1.0
+    model_revision: mock-small@sha256:dev
+    concurrency: 32
+    prompt_tokens_p50: 420
+    prompt_tokens_p95: 1100
+    engine_settings:
+      max_num_seqs: 64
+      enable_prefix_caching: true
+    quality_score: 0.82
+    latency_p95_ms: 480
+    throughput_rps: 41.5
+    gpu_seconds_per_request: 0.11
+
+deployments:
+  - id: deploy-0002
+    container_digest: sha256:mock-container
+    gpu_pool: l4-pool
+    model_checksums:
+      small-specialist: sha256:mock-small
+      general-local: sha256:mock-general
+    adapter_checksums:
+      claims-extraction-lora: sha256:mock-claims
+    ray_config:
+      num_replicas: 2
+      max_ongoing_requests: 16
+    vllm_config:
+      enable_prefix_caching: true
+      max_model_len: 8192
+    stage: production
+    previous_revision_id: deploy-0001
+
+  - id: deploy-0001
+    container_digest: sha256:mock-container-previous
+    gpu_pool: l4-pool
+    model_checksums:
+      small-specialist: sha256:mock-small-previous
+    stage: deprecated

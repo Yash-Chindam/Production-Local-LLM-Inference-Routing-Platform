@@ -27,6 +27,7 @@ class ChatMessage(BaseModel):
 
 class RoutingOptions(BaseModel):
     task: TaskClass | None = None
+    domain: str | None = Field(default=None, max_length=64)
     privacy: PrivacyClass = PrivacyClass.PRIVATE
     latency_tier: Literal["interactive", "standard", "batch"] = "standard"
     quality_floor: float = Field(default=0.0, ge=0.0, le=1.0)
@@ -70,6 +71,8 @@ class RouteDecision(BaseModel):
     reason: str
     score: float
     candidate_count: int
+    adapter_id: str | None = None
+    adapter_revision: str | None = None
 
 
 class ChatCompletionChoice(BaseModel):

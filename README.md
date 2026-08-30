@@ -61,6 +61,29 @@ Successful PR CI runs are merged automatically only for trusted same-repository 
 and Dependabot. Forks, drafts, and untrusted author associations are deliberately skipped;
 repository branch-protection and review requirements continue to apply.
 
+## Model registry
+
+[`config/registry.yaml`](config/registry.yaml) is the governed source of truth for what may
+be served. A request can never introduce a model path, revision, or adapter.
+
+- Model cards record license, tokenizer, revision, context limit, quantization, hardware
+  requirement, intended tasks, limitations, and evaluation evidence. Promotion to
+  `production` is rejected without evaluation references.
+- Adapters bind to one immutable base revision, declare their dataset version and measured
+  quality delta, and cannot be promoted with unresolved regressions.
+- Deployment revisions record container digest, model and adapter checksums, Ray and vLLM
+  configuration, GPU pool, and the previous revision used for rollback.
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /v1/models` | OpenAI-compatible catalog enriched with tier, stage, license, and quantization. |
+| `GET /v1/registry/models/{id}` | Full model card with its benchmark evidence. |
+| `GET /v1/registry/adapters` | Promoted LoRA and QLoRA adapters. |
+| `GET /v1/registry/deployments` | Deployment revisions and rollback targets. |
+
+Send `routing.domain` to request a domain adapter; the router applies the promoted adapter
+with the largest measured quality gain for that base revision and task, or none at all.
+
 ## Observability
 
 `GET /metrics` returns Prometheus exposition text and is intentionally unauthenticated so
@@ -104,6 +127,7 @@ All settings use the `ROUTER_` prefix.
 | `ROUTER_ADMISSION_TIMEOUT_SECONDS` | `0.25` | Time allowed to wait for capacity. |
 | `ROUTER_QUOTA_REQUESTS_PER_MINUTE` | `120` | Per-token sliding-window quota. |
 | `ROUTER_EXTERNAL_FALLBACK_ENABLED` | `false` | Operator gate for external fallback. |
+| `ROUTER_REGISTRY_PATH` | `config/registry.yaml` | Governed model catalog; built-in profiles are used if absent. |
 | `ROUTER_ROUTING_POLICY_VERSION` | `v1` | Invalidates router and response caches when changed. |
 | `ROUTER_CACHE_ENABLED` | `true` | Master switch for all cache tiers. |
 | `ROUTER_CACHE_TTL_SECONDS` | `300` | Exact-response entry lifetime. |
