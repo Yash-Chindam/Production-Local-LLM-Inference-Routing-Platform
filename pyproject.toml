@@ -23,8 +23,8 @@ dev = [
   "pytest>=9.1.1,<10",
   "pytest-asyncio>=1.4.0,<2",
   "pytest-cov>=7.1.0,<8",
-  "ruff>=0.16.4,<1",
-  "types-PyYAML>=6.0.12,<7",
+  "ruff>=0.16.5,<1",
+  "types-PyYAML>=6.0.12.20260815,<7",
 ]
 
 [tool.hatch.build.targets.wheel]
