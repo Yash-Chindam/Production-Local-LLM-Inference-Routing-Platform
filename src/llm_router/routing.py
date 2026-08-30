@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from llm_router.models import (
     ChatCompletionRequest,
@@ -7,6 +8,9 @@ from llm_router.models import (
     RouteDecision,
     TaskClass,
 )
+
+if TYPE_CHECKING:  # pragma: no cover - import cycle guard for type checking only
+    from llm_router.registry import Registry
 
 
 class NoEligibleModelError(RuntimeError):
@@ -70,6 +74,7 @@ def default_model_profiles() -> tuple[ModelProfile, ...]:
 class Router:
     profiles: tuple[ModelProfile, ...]
     external_fallback_enabled: bool = False
+    registry: "Registry | None" = None
 
     def classify_task(self, request: ChatCompletionRequest) -> TaskClass:
         if request.routing.task is not None:
@@ -130,16 +135,34 @@ class Router:
             )
 
         selected = max(candidates, key=score)
+        adapter = (
+            self.registry.select_adapter(
+                model_id=selected.id,
+                revision=selected.revision,
+                domain=request.routing.domain,
+                task=task,
+            )
+            if self.registry is not None
+            else None
+        )
+        reason = (
+            f"selected highest policy score among {len(candidates)} eligible model(s); "
+            f"task={task.value}, privacy={request.routing.privacy.value}, "
+            f"latency_tier={request.routing.latency_tier}"
+        )
+        if adapter is not None:
+            reason += (
+                f"; applied adapter {adapter.id} for domain {adapter.domain} "
+                f"(measured quality delta {adapter.benchmark.quality_delta:+.3f})"
+            )
         return RouteDecision(
             profile=selected,
             task=task,
-            reason=(
-                f"selected highest policy score among {len(candidates)} eligible model(s); "
-                f"task={task.value}, privacy={request.routing.privacy.value}, "
-                f"latency_tier={request.routing.latency_tier}"
-            ),
+            reason=reason,
             score=round(score(selected), 3),
             candidate_count=len(candidates),
+            adapter_id=None if adapter is None else adapter.id,
+            adapter_revision=None if adapter is None else adapter.adapter_revision,
         )
 
     @staticmethod
