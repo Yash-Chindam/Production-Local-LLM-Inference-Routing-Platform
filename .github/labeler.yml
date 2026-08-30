@@ -1,0 +1,16 @@
+area/api:
+  - changed-files:
+      - any-glob-to-any-file: "src/llm_router/**"
+area/tests:
+  - changed-files:
+      - any-glob-to-any-file: ["tests/**", "playwright.config.ts"]
+area/ci-cd:
+  - changed-files:
+      - any-glob-to-any-file: [".github/**", "Dockerfile", ".dockerignore"]
+documentation:
+  - changed-files:
+      - any-glob-to-any-file: "**/*.md"
+dependencies:
+  - changed-files:
+      - any-glob-to-any-file: ["pyproject.toml", "package.json", "package-lock.json"]
+
