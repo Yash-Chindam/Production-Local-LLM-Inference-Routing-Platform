@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     backend_timeout_seconds: float = Field(default=60.0, gt=0)
     registry_path: str = "config/registry.yaml"
     routing_policy_version: str = "v1"
+    redis_url: str = ""
     cache_enabled: bool = True
     cache_ttl_seconds: float = Field(default=300.0, gt=0)
     cache_max_entries: int = Field(default=1024, ge=1)
