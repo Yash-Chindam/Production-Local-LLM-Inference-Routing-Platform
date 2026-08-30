@@ -62,3 +62,35 @@ test("publishes scrape-ready metrics for a completed request", async ({ request 
   expect(body).toContain("router_tokens_total");
   expect(body).toContain("router_predicted_quality_sum");
 });
+
+test("serves a repeated deterministic request from the exact cache", async ({ request }) => {
+  const body = {
+    model: "auto",
+    messages: [{ role: "user", content: "Classify this end-to-end cache probe" }],
+    routing: { privacy: "public" },
+  };
+
+  const first = await request.post("/v1/chat/completions", { data: body });
+  expect(first.status()).toBe(200);
+  expect(first.headers()["x-cache"]).toBe("miss");
+
+  const second = await request.post("/v1/chat/completions", { data: body });
+  expect(second.status()).toBe(200);
+  expect(second.headers()["x-cache"]).toBe("exact");
+  expect((await second.json()).routing.cache).toBe("exact");
+  expect(second.headers()["x-route-model"]).toBe(first.headers()["x-route-model"]);
+});
+
+test("never caches restricted-class requests", async ({ request }) => {
+  const body = {
+    model: "auto",
+    messages: [{ role: "user", content: "Extract fields from this restricted record" }],
+    routing: { privacy: "restricted" },
+  };
+
+  await request.post("/v1/chat/completions", { data: body });
+  const repeat = await request.post("/v1/chat/completions", { data: body });
+
+  expect(repeat.status()).toBe(200);
+  expect(repeat.headers()["x-cache"]).toBe("miss");
+});

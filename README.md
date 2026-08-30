@@ -80,6 +80,19 @@ in-cluster scrapers can read it; restrict it with network policy rather than a b
 | `router_cache_events_total` | Cache lookups by cache and result. |
 | `router_model_load_seconds` | Model load and cold-start duration. |
 
+## Caching
+
+Cache keys bind the tenant, the active model-catalog fingerprint, and the generation
+parameters, so promoting any model revision or routing policy version invalidates every
+dependent entry. Responses carry `X-Cache: miss | exact | semantic`.
+
+| Cache | Eligibility |
+|---|---|
+| Exact response | Deterministic requests (`temperature = 0`) that are not `restricted`. |
+| Prefix | Reported per model revision for repeated instruction prefixes. |
+| Semantic | Disabled by default; requires `public` privacy, deterministic generation, and an extraction, classification, or summarization task. |
+| Router decision | Reuses stable task classification; cleared when the policy version changes. |
+
 ## Runtime settings
 
 All settings use the `ROUTER_` prefix.
@@ -91,6 +104,12 @@ All settings use the `ROUTER_` prefix.
 | `ROUTER_ADMISSION_TIMEOUT_SECONDS` | `0.25` | Time allowed to wait for capacity. |
 | `ROUTER_QUOTA_REQUESTS_PER_MINUTE` | `120` | Per-token sliding-window quota. |
 | `ROUTER_EXTERNAL_FALLBACK_ENABLED` | `false` | Operator gate for external fallback. |
+| `ROUTER_ROUTING_POLICY_VERSION` | `v1` | Invalidates router and response caches when changed. |
+| `ROUTER_CACHE_ENABLED` | `true` | Master switch for all cache tiers. |
+| `ROUTER_CACHE_TTL_SECONDS` | `300` | Exact-response entry lifetime. |
+| `ROUTER_CACHE_MAX_ENTRIES` | `1024` | Bound on cached responses. |
+| `ROUTER_SEMANTIC_CACHE_ENABLED` | `false` | Enables similarity reuse for approved tasks. |
+| `ROUTER_SEMANTIC_SIMILARITY_THRESHOLD` | `0.92` | Minimum similarity for a semantic hit. |
 
 External routing also requires public data and request-level opt-in. Private and restricted
 requests are never eligible for an external route.

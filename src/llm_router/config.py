@@ -15,6 +15,12 @@ class Settings(BaseSettings):
     admission_timeout_seconds: float = Field(default=0.25, gt=0)
     quota_requests_per_minute: int = Field(default=120, ge=1)
     external_fallback_enabled: bool = False
+    routing_policy_version: str = "v1"
+    cache_enabled: bool = True
+    cache_ttl_seconds: float = Field(default=300.0, gt=0)
+    cache_max_entries: int = Field(default=1024, ge=1)
+    semantic_cache_enabled: bool = False
+    semantic_similarity_threshold: float = Field(default=0.92, ge=0.0, le=1.0)
 
     @model_validator(mode="after")
     def reject_development_key_in_shared_environments(self) -> "Settings":
