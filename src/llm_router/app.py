@@ -14,13 +14,26 @@ from llm_router.admission import (
     QuotaExceededError,
     SlidingWindowQuota,
 )
-from llm_router.backends import InferenceBackend, MockInferenceBackend
+from llm_router.backends import BackendResult, InferenceBackend, MockInferenceBackend
+from llm_router.caching import (
+    CachedCompletion,
+    CacheStore,
+    InMemoryCacheStore,
+    PrefixTracker,
+    RouterDecisionCache,
+    SemanticCache,
+    build_cache_key,
+    catalog_fingerprint,
+    exact_cache_eligible,
+    semantic_cache_eligible,
+)
 from llm_router.config import Settings, get_settings
 from llm_router.models import (
     ChatCompletionChoice,
     ChatCompletionRequest,
     ChatCompletionResponse,
     ChatMessage,
+    RouteDecision,
     Usage,
 )
 from llm_router.observability import Metrics
@@ -32,6 +45,7 @@ def create_app(
     *,
     backend: InferenceBackend | None = None,
     metrics: Metrics | None = None,
+    cache_store: CacheStore | None = None,
 ) -> FastAPI:
     runtime_settings = settings or get_settings()
     router = Router(
@@ -45,6 +59,17 @@ def create_app(
     quota = SlidingWindowQuota(runtime_settings.quota_requests_per_minute)
     inference_backend = backend or MockInferenceBackend()
     telemetry = metrics if metrics is not None else Metrics()
+    exact_cache: CacheStore = cache_store or InMemoryCacheStore(
+        max_entries=runtime_settings.cache_max_entries,
+        ttl_seconds=runtime_settings.cache_ttl_seconds,
+    )
+    semantic_cache = SemanticCache(threshold=runtime_settings.semantic_similarity_threshold)
+    decision_cache = RouterDecisionCache(policy_version=runtime_settings.routing_policy_version)
+    prefix_tracker = PrefixTracker()
+    catalog_version = catalog_fingerprint(
+        (profile.revision for profile in router.profiles),
+        runtime_settings.routing_policy_version,
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -131,6 +156,80 @@ def create_app(
         ]
         return {"object": "list", "data": visible}
 
+    def _completion_response(
+        *,
+        model_id: str,
+        text: str,
+        prompt_tokens: int,
+        completion_tokens: int,
+        routing: dict[str, object],
+        finish_reason: str = "stop",
+    ) -> ChatCompletionResponse:
+        return ChatCompletionResponse(
+            id=f"chatcmpl-{uuid.uuid4().hex}",
+            created=int(time.time()),
+            model=model_id,
+            choices=[
+                ChatCompletionChoice(
+                    message=ChatMessage(role="assistant", content=text),
+                    finish_reason="length" if finish_reason == "length" else "stop",
+                )
+            ],
+            usage=Usage(
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=prompt_tokens + completion_tokens,
+            ),
+            routing=routing,
+        )
+
+    async def _lookup_cache(
+        payload: ChatCompletionRequest, prompt: str, cache_key: str, tenant: str
+    ) -> tuple[str, CachedCompletion] | None:
+        if not runtime_settings.cache_enabled:
+            return None
+        if exact_cache_eligible(payload):
+            entry = await exact_cache.get(cache_key)
+            telemetry.record_cache_event("exact", "hit" if entry is not None else "miss")
+            if entry is not None:
+                return "exact", entry
+        if (
+            runtime_settings.semantic_cache_enabled
+            and payload.routing.task is not None
+            and semantic_cache_eligible(payload, payload.routing.task)
+        ):
+            scope = semantic_cache.scope(payload, tenant=tenant, model_revision=catalog_version)
+            match = semantic_cache.lookup(scope, prompt)
+            telemetry.record_cache_event("semantic", "hit" if match is not None else "miss")
+            if match is not None:
+                return "semantic", match
+        return None
+
+    async def _store_cache(
+        payload: ChatCompletionRequest,
+        prompt: str,
+        cache_key: str,
+        tenant: str,
+        decision: RouteDecision,
+        result: BackendResult,
+    ) -> None:
+        if not runtime_settings.cache_enabled:
+            return
+        entry = CachedCompletion(
+            text=result.text,
+            model_id=decision.profile.id,
+            model_revision=decision.profile.revision,
+            prompt_tokens=result.prompt_tokens,
+            completion_tokens=result.completion_tokens,
+        )
+        if exact_cache_eligible(payload):
+            await exact_cache.set(cache_key, entry)
+        if runtime_settings.semantic_cache_enabled and semantic_cache_eligible(
+            payload, decision.task
+        ):
+            scope = semantic_cache.scope(payload, tenant=tenant, model_revision=catalog_version)
+            semantic_cache.store(scope, prompt, entry)
+
     @app.post("/v1/chat/completions", response_model=ChatCompletionResponse)
     async def chat_completions(
         payload: ChatCompletionRequest,
@@ -139,8 +238,41 @@ def create_app(
     ) -> ChatCompletionResponse:
         started = time.perf_counter()
         await quota.consume(subject)
-        decision = router.select(payload)
+        prompt = payload.prompt
+        cache_key = build_cache_key(
+            payload, tenant=subject, model_revision=catalog_version, prompt=prompt
+        )
+
+        cached = await _lookup_cache(payload, prompt, cache_key, subject)
+        if cached is not None:
+            hit_name, entry = cached
+            response.headers["X-Cache"] = hit_name
+            response.headers["X-Route-Model"] = entry.model_id
+            response.headers["X-Route-Revision"] = entry.model_revision
+            return _completion_response(
+                model_id=entry.model_id,
+                text=entry.text,
+                prompt_tokens=entry.prompt_tokens,
+                completion_tokens=entry.completion_tokens,
+                routing={
+                    "model_revision": entry.model_revision,
+                    "cache": hit_name,
+                    "reason": f"served from the {hit_name} cache",
+                },
+            )
+
+        cached_task = decision_cache.get(prompt) if runtime_settings.cache_enabled else None
+        telemetry.record_cache_event("router", "hit" if cached_task is not None else "miss")
+        decision = router.select(payload, task=cached_task)
+        if runtime_settings.cache_enabled:
+            decision_cache.set(prompt, decision.task)
         telemetry.record_route(decision, privacy=payload.routing.privacy.value)
+        telemetry.record_cache_event(
+            "prefix",
+            "hit"
+            if prefix_tracker.observe(prompt, model_revision=decision.profile.revision)
+            else "miss",
+        )
 
         telemetry.queued_requests.inc()
         try:
@@ -164,6 +296,9 @@ def create_app(
             completion_tokens=result.completion_tokens,
         )
 
+        await _store_cache(payload, prompt, cache_key, subject, decision, result)
+
+        response.headers["X-Cache"] = "miss"
         response.headers["X-Route-Model"] = decision.profile.id
         response.headers["X-Route-Revision"] = decision.profile.revision
         response.headers["X-Route-Reason"] = decision.reason
