@@ -89,3 +89,56 @@ def test_external_model_requires_public_data_and_explicit_opt_in() -> None:
         )
     assert response.status_code == 200
     assert response.json()["model"] == "approved-external-fallback"
+
+
+def test_metrics_endpoint_reports_route_and_completion_telemetry() -> None:
+    with build_client() as client:
+        client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer integration-key"},
+            json={
+                "model": "auto",
+                "messages": [{"role": "user", "content": "Classify this ticket"}],
+            },
+        )
+        response = client.get("/metrics")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/plain")
+    body = response.text
+    assert "router_requests_total" in body
+    assert (
+        'router_routes_total{model="small-specialist",privacy="private",task="classification"}'
+        in body
+    )
+    assert "router_tokens_total" in body
+    assert "router_inflight_requests 0.0" in body
+    assert "router_queued_requests 0.0" in body
+
+
+def test_metrics_endpoint_counts_quota_rejections() -> None:
+    with build_client(quota=1) as client:
+        headers = {"Authorization": "Bearer integration-key"}
+        body = {"model": "auto", "messages": [{"role": "user", "content": "hello"}]}
+        assert client.post("/v1/chat/completions", headers=headers, json=body).status_code == 200
+        assert client.post("/v1/chat/completions", headers=headers, json=body).status_code == 429
+        metrics = client.get("/metrics").text
+
+    assert 'router_rejections_total{type="quota_exceeded"} 1.0' in metrics
+
+
+def test_metrics_endpoint_counts_policy_rejections() -> None:
+    with build_client() as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer integration-key"},
+            json={
+                "model": "approved-external-fallback",
+                "messages": [{"role": "user", "content": "hello"}],
+                "routing": {"privacy": "restricted", "allow_external_fallback": True},
+            },
+        )
+        assert response.status_code == 422
+        metrics = client.get("/metrics").text
+
+    assert 'router_rejections_total{type="no_eligible_model"} 1.0' in metrics
