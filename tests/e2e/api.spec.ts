@@ -41,3 +41,24 @@ test("rejects invalid credentials", async ({ playwright }, testInfo) => {
   expect(response.status()).toBe(401);
   await anonymous.dispose();
 });
+
+test("publishes scrape-ready metrics for a completed request", async ({ request }) => {
+  const completion = await request.post("/v1/chat/completions", {
+    data: {
+      model: "auto",
+      messages: [{ role: "user", content: "Summarize the quarterly report" }],
+    },
+  });
+  expect(completion.status()).toBe(200);
+  const routedModel = completion.headers()["x-route-model"];
+
+  const metrics = await request.get("/metrics");
+  expect(metrics.status()).toBe(200);
+  expect(metrics.headers()["content-type"]).toContain("text/plain");
+
+  const body = await metrics.text();
+  expect(body).toContain(`router_requests_total{model="${routedModel}"`);
+  expect(body).toContain("router_request_latency_seconds_bucket");
+  expect(body).toContain("router_tokens_total");
+  expect(body).toContain("router_predicted_quality_sum");
+});
