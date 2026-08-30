@@ -1,0 +1,29 @@
+name: PR labeler
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ensure managed labels exist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          gh label create "area/api" --color "1D76DB" --force --repo "$REPOSITORY"
+          gh label create "area/tests" --color "5319E7" --force --repo "$REPOSITORY"
+          gh label create "area/ci-cd" --color "0052CC" --force --repo "$REPOSITORY"
+          gh label create "documentation" --color "0075CA" --force --repo "$REPOSITORY"
+          gh label create "dependencies" --color "0366D6" --force --repo "$REPOSITORY"
+          gh label create "python" --color "3572A5" --force --repo "$REPOSITORY"
+          gh label create "javascript" --color "F1E05A" --force --repo "$REPOSITORY"
+          gh label create "github-actions" --color "2088FF" --force --repo "$REPOSITORY"
+      - uses: actions/labeler@v6

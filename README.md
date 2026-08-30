@@ -52,6 +52,15 @@ docker build -t local-llm-router:dev .
 CI reports unit/static analysis, integration, and Playwright end-to-end tests separately.
 The release-image build starts only after all three test layers pass.
 
+After a successful CI run on `main`, CD creates a versioned OCI image artifact. Registry
+or cluster publication remains disabled until an explicit deployment destination is
+configured. Dependabot maintains Python, npm, and GitHub Actions dependencies, while the
+PR labeler classifies API, test, CI/CD, documentation, and dependency changes.
+
+Successful PR CI runs are merged automatically only for trusted same-repository authors
+and Dependabot. Forks, drafts, and untrusted author associations are deliberately skipped;
+repository branch-protection and review requirements continue to apply.
+
 ## Runtime settings
 
 All settings use the `ROUTER_` prefix.
