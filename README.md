@@ -1,6 +1,8 @@
 # Production Local-LLM Inference & Routing Platform
 
-Policy-aware routing components for a production local-model inference platform.
+An OpenAI-compatible control plane for routing requests across local model tiers. The
+current inference backend is deterministic for CI and is replaceable by Ray Serve and
+vLLM deployments.
 
 The complete architecture and design targets are documented in
 [`02-production-local-llm-inference-routing-platform.md`](02-production-local-llm-inference-routing-platform.md).
@@ -12,11 +14,49 @@ Requires Python 3.11 or newer.
 ```bash
 python -m venv .venv
 python -m pip install -e ".[dev]"
+python -m uvicorn llm_router.app:app --app-dir src --reload
+```
+
+The development bearer token is `dev-key`. Override it in every shared environment.
+Production startup rejects that development key.
+
+```bash
+ROUTER_API_KEYS="replace-me" python -m uvicorn llm_router.app:app --app-dir src
+```
+
+Example request:
+
+```bash
+curl http://127.0.0.1:8000/v1/chat/completions \
+  -H "Authorization: Bearer dev-key" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"auto","messages":[{"role":"user","content":"Extract invoice fields"}],"routing":{"privacy":"restricted"}}'
+```
+
+Every response records the selected model, immutable revision, inferred task, candidate
+count, policy score, and route reason.
+
+## Verification
+
+```bash
 ruff format --check .
 ruff check .
 mypy
-pytest tests/unit --cov=llm_router --cov-report=term-missing
+pytest tests/unit tests/integration --cov=llm_router --cov-report=term-missing
+docker build -t local-llm-router:dev .
 ```
 
-This first delivery slice contains deterministic routing, privacy restrictions, quotas,
-and bounded admission. API ingress and model-serving adapters are delivered separately.
+## Runtime settings
+
+All settings use the `ROUTER_` prefix.
+
+| Variable | Default | Purpose |
+|---|---:|---|
+| `ROUTER_API_KEYS` | `dev-key` | Comma-separated bearer tokens. |
+| `ROUTER_MAX_CONCURRENCY` | `32` | Maximum in-flight requests. |
+| `ROUTER_ADMISSION_TIMEOUT_SECONDS` | `0.25` | Time allowed to wait for capacity. |
+| `ROUTER_QUOTA_REQUESTS_PER_MINUTE` | `120` | Per-token sliding-window quota. |
+| `ROUTER_EXTERNAL_FALLBACK_ENABLED` | `false` | Operator gate for external fallback. |
+
+External routing also requires public data and request-level opt-in. Private and restricted
+requests are never eligible for an external route.
