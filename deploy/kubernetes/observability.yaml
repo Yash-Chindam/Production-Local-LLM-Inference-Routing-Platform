@@ -1,0 +1,16 @@
+# Metrics are unauthenticated by design and reachable only from monitoring.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: llm-gateway
+  namespace: llm-routing
+  labels:
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: llm-gateway
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
