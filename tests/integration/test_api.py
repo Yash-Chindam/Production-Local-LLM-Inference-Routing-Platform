@@ -53,7 +53,7 @@ def test_validation_and_quota_errors_are_explicit() -> None:
         invalid = client.post(
             "/v1/chat/completions",
             headers=headers,
-            json={"messages": [{"role": "user", "content": "hello"}], "stream": True},
+            json={"messages": [{"role": "user", "content": "hello"}], "max_tokens": 0},
         )
         assert invalid.status_code == 422
         first = client.post(
