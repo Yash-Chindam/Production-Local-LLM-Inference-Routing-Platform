@@ -9,9 +9,9 @@ description = "OpenAI-compatible gateway and policy router for local LLM inferen
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-  "fastapi>=0.116,<1",
-  "pydantic-settings>=2.10,<3",
-  "uvicorn[standard]>=0.35,<1",
+  "fastapi>=0.141.1,<1",
+  "pydantic-settings>=2.15.0,<3",
+  "uvicorn[standard]>=0.52.4,<1",
 ]
 
 [project.optional-dependencies]
