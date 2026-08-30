@@ -61,6 +61,25 @@ Successful PR CI runs are merged automatically only for trusted same-repository 
 and Dependabot. Forks, drafts, and untrusted author associations are deliberately skipped;
 repository branch-protection and review requirements continue to apply.
 
+## Observability
+
+`GET /metrics` returns Prometheus exposition text and is intentionally unauthenticated so
+in-cluster scrapers can read it; restrict it with network policy rather than a bearer token.
+
+| Metric | Purpose |
+|---|---|
+| `router_request_latency_seconds` | End-to-end latency histogram per model. |
+| `router_time_to_first_token_seconds` | Admission-to-first-token delay. |
+| `router_time_per_output_token_seconds` | Mean generation time per output token. |
+| `router_tokens_total` | Prompt and completion tokens per model. |
+| `router_inflight_requests` / `router_queued_requests` | Live capacity and queue depth. |
+| `router_routes_total` | Requests per route with task and privacy class. |
+| `router_external_fallback_total` | Fallback frequency. |
+| `router_queue_delay_prediction_error_ms` | Predicted versus observed queue delay. |
+| `router_rejections_total` | Quota, overload, and policy rejections. |
+| `router_cache_events_total` | Cache lookups by cache and result. |
+| `router_model_load_seconds` | Model load and cold-start duration. |
+
 ## Runtime settings
 
 All settings use the `ROUTER_` prefix.
