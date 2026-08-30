@@ -185,3 +185,32 @@ class RouterDecisionCache:
 
     def __len__(self) -> int:
         return len(self._entries)
+
+
+def catalog_fingerprint(revisions: Iterable[str], policy_version: str) -> str:
+    """Stable identity for the active model catalog and routing policy.
+
+    Cache lookups happen before routing, so keys are bound to this fingerprint:
+    promoting any model or policy version invalidates every dependent entry.
+    """
+
+    material = "|".join((policy_version, *sorted(revisions)))
+    return hashlib.sha256(material.encode()).hexdigest()[:16]
+
+
+class PrefixTracker:
+    """Tracks reuse of repeated instruction prefixes for cache-hit reporting."""
+
+    def __init__(self, *, max_entries: int = 1024, prefix_chars: int = 512) -> None:
+        self._max_entries = max_entries
+        self._prefix_chars = prefix_chars
+        self._seen: OrderedDict[str, None] = OrderedDict()
+
+    def observe(self, prompt: str, *, model_revision: str) -> bool:
+        key = prefix_key(prompt, model_revision=model_revision, prefix_chars=self._prefix_chars)
+        hit = key in self._seen
+        self._seen[key] = None
+        self._seen.move_to_end(key)
+        while len(self._seen) > self._max_entries:
+            self._seen.popitem(last=False)
+        return hit
