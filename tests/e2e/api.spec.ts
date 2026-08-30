@@ -94,3 +94,35 @@ test("never caches restricted-class requests", async ({ request }) => {
   expect(repeat.status()).toBe(200);
   expect(repeat.headers()["x-cache"]).toBe("miss");
 });
+
+test("applies a registered LoRA adapter for a domain request", async ({ request }) => {
+  const response = await request.post("/v1/chat/completions", {
+    data: {
+      model: "auto",
+      messages: [{ role: "user", content: "Extract the claim fields as JSON" }],
+      routing: { privacy: "restricted", domain: "claims", task: "extraction" },
+    },
+  });
+
+  expect(response.status()).toBe(200);
+  expect(response.headers()["x-route-adapter"]).toBe("claims-extraction-lora");
+  const body = await response.json();
+  expect(body.model).toBe("small-specialist");
+  expect(body.routing.adapter_revision).toBe("claims-lora@sha256:dev");
+});
+
+test("publishes model cards and deployment rollback targets", async ({ request }) => {
+  const card = await request.get("/v1/registry/models/small-specialist");
+  expect(card.status()).toBe(200);
+  const cardBody = await card.json();
+  expect(cardBody.license).toBeTruthy();
+  expect(cardBody.limitations).toBeTruthy();
+  expect(cardBody.evaluation_references.length).toBeGreaterThan(0);
+
+  const deployments = await request.get("/v1/registry/deployments");
+  expect(deployments.status()).toBe(200);
+  const current = (await deployments.json()).data.find(
+    (item: { id: string }) => item.id === "deploy-0002",
+  );
+  expect(current.rollback_target).toBe("deploy-0001");
+});

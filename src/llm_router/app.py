@@ -4,6 +4,7 @@ import time
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
@@ -37,7 +38,16 @@ from llm_router.models import (
     Usage,
 )
 from llm_router.observability import Metrics
+from llm_router.registry import Registry, RegistryError, catalog_revisions, load_registry
 from llm_router.routing import NoEligibleModelError, Router, default_model_profiles
+
+
+def _load_catalog(path: str) -> Registry | None:
+    """Load the governed catalog, falling back to built-in profiles when absent."""
+
+    if not Path(path).exists():
+        return None
+    return load_registry(path)
 
 
 def create_app(
@@ -46,11 +56,18 @@ def create_app(
     backend: InferenceBackend | None = None,
     metrics: Metrics | None = None,
     cache_store: CacheStore | None = None,
+    registry: Registry | None = None,
 ) -> FastAPI:
     runtime_settings = settings or get_settings()
+    catalog = registry if registry is not None else _load_catalog(runtime_settings.registry_path)
+    profiles = catalog.profiles() if catalog is not None else default_model_profiles()
+    policy_version = (
+        catalog.policy.version if catalog is not None else runtime_settings.routing_policy_version
+    )
     router = Router(
-        profiles=default_model_profiles(),
+        profiles=profiles,
         external_fallback_enabled=runtime_settings.external_fallback_enabled,
+        registry=catalog,
     )
     admission = AdmissionController(
         runtime_settings.max_concurrency,
@@ -64,12 +81,14 @@ def create_app(
         ttl_seconds=runtime_settings.cache_ttl_seconds,
     )
     semantic_cache = SemanticCache(threshold=runtime_settings.semantic_similarity_threshold)
-    decision_cache = RouterDecisionCache(policy_version=runtime_settings.routing_policy_version)
+    decision_cache = RouterDecisionCache(policy_version=policy_version)
     prefix_tracker = PrefixTracker()
-    catalog_version = catalog_fingerprint(
-        (profile.revision for profile in router.profiles),
-        runtime_settings.routing_policy_version,
+    revisions = (
+        catalog_revisions(catalog)
+        if catalog is not None
+        else (profile.revision for profile in router.profiles)
     )
+    catalog_version = catalog_fingerprint(revisions, policy_version)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -143,18 +162,74 @@ def create_app(
 
     @app.get("/v1/models", dependencies=[Depends(authenticate)])
     async def models() -> dict[str, object]:
-        visible = [
-            {
+        cards = {card.id: card for card in catalog.servable_models()} if catalog else {}
+        visible: list[dict[str, object]] = []
+        for profile in router.profiles:
+            if not profile.local and not runtime_settings.external_fallback_enabled:
+                continue
+            entry: dict[str, object] = {
                 "id": profile.id,
                 "object": "model",
                 "owned_by": "local" if profile.local else "external-policy",
                 "revision": profile.revision,
                 "healthy": profile.healthy,
+                "context_limit": profile.context_limit,
             }
-            for profile in router.profiles
-            if profile.local or runtime_settings.external_fallback_enabled
-        ]
+            card = cards.get(profile.id)
+            if card is not None:
+                entry.update(
+                    {
+                        "tier": card.tier.value,
+                        "license": card.license,
+                        "tokenizer": card.tokenizer,
+                        "quantization": card.quantization.value,
+                        "stage": card.stage.value,
+                    }
+                )
+            visible.append(entry)
         return {"object": "list", "data": visible}
+
+    @app.get("/v1/registry/models/{model_id}", dependencies=[Depends(authenticate)])
+    async def model_card(model_id: str) -> dict[str, object]:
+        if catalog is None:
+            raise HTTPException(status_code=404, detail="no catalog is configured")
+        try:
+            card = catalog.model_card(model_id)
+        except RegistryError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        payload = card.model_dump(mode="json")
+        payload["benchmarks"] = [
+            run.model_dump(mode="json") for run in catalog.benchmarks_for(card.revision)
+        ]
+        return payload
+
+    @app.get("/v1/registry/adapters", dependencies=[Depends(authenticate)])
+    async def adapters() -> dict[str, object]:
+        if catalog is None:
+            return {"object": "list", "data": []}
+        return {
+            "object": "list",
+            "data": [adapter.model_dump(mode="json") for adapter in catalog.servable_adapters()],
+        }
+
+    @app.get("/v1/registry/deployments", dependencies=[Depends(authenticate)])
+    async def deployments() -> dict[str, object]:
+        if catalog is None:
+            return {"object": "list", "data": []}
+        return {
+            "object": "list",
+            "data": [
+                {
+                    **revision.model_dump(mode="json"),
+                    "rollback_target": (
+                        target.id
+                        if (target := catalog.rollback_target(revision.id)) is not None
+                        else None
+                    ),
+                }
+                for revision in catalog.deployments
+            ],
+        }
 
     def _completion_response(
         *,
@@ -299,6 +374,8 @@ def create_app(
         await _store_cache(payload, prompt, cache_key, subject, decision, result)
 
         response.headers["X-Cache"] = "miss"
+        if decision.adapter_id is not None:
+            response.headers["X-Route-Adapter"] = decision.adapter_id
         response.headers["X-Route-Model"] = decision.profile.id
         response.headers["X-Route-Revision"] = decision.profile.revision
         response.headers["X-Route-Reason"] = decision.reason
@@ -319,6 +396,8 @@ def create_app(
             ),
             routing={
                 "model_revision": decision.profile.revision,
+                "adapter_id": decision.adapter_id,
+                "adapter_revision": decision.adapter_revision,
                 "task": decision.task.value,
                 "reason": decision.reason,
                 "score": decision.score,
