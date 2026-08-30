@@ -4,6 +4,12 @@ on:
   workflow_run:
     workflows: [CI]
     types: [completed]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Commit SHA to package
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -11,23 +17,26 @@ permissions:
 jobs:
   release-artifact:
     if: >-
-      github.event.workflow_run.conclusion == 'success' &&
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.head_branch == 'main' &&
-      github.event.workflow_run.event == 'push'
+      github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
+    env:
+      RELEASE_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.event.workflow_run.head_sha }}
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ env.RELEASE_REF }}
       - uses: docker/setup-buildx-action@v4
       - uses: docker/build-push-action@v7
         with:
           context: .
           outputs: type=oci,dest=${{ runner.temp }}/local-llm-router.tar
-          tags: local-llm-router:${{ github.event.workflow_run.head_sha }}
+          tags: local-llm-router:${{ env.RELEASE_REF }}
       - uses: actions/upload-artifact@v7
         with:
-          name: local-llm-router-${{ github.event.workflow_run.head_sha }}
+          name: local-llm-router-${{ env.RELEASE_REF }}
           path: ${{ runner.temp }}/local-llm-router.tar
           retention-days: 14
 

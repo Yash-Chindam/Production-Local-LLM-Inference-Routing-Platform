@@ -6,6 +6,7 @@ on:
     types: [completed]
 
 permissions:
+  actions: write
   contents: write
   pull-requests: write
 
@@ -27,10 +28,11 @@ jobs:
           head_repo="$(jq -r '.head.repo.full_name' <<<"$pr")"
           login="$(jq -r '.user.login' <<<"$pr")"
           association="$(jq -r '.author_association' <<<"$pr")"
+          base_ref="$(jq -r '.base.ref' <<<"$pr")"
           draft="$(jq -r '.draft' <<<"$pr")"
 
-          if [[ "$head_repo" != "$REPOSITORY" || "$draft" == "true" ]]; then
-            echo "Skipping forked or draft pull request."
+          if [[ "$head_repo" != "$REPOSITORY" || "$base_ref" != "main" || "$draft" == "true" ]]; then
+            echo "Skipping forked, non-main, or draft pull request."
             exit 0
           fi
 
@@ -39,5 +41,7 @@ jobs:
             exit 0
           fi
 
-          gh pr merge "$PR_NUMBER" --repo "$REPOSITORY" --squash --delete-branch
+          gh pr merge "$PR_NUMBER" --repo "$REPOSITORY" --merge --delete-branch
+          merge_sha="$(gh pr view "$PR_NUMBER" --repo "$REPOSITORY" --json mergeCommit --jq '.mergeCommit.oid')"
+          gh workflow run cd.yml --repo "$REPOSITORY" --ref main -f ref="$merge_sha"
 
