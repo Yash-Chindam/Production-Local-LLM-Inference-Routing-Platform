@@ -9,11 +9,12 @@ The complete architecture and design targets are documented in
 
 ## Development
 
-Requires Python 3.11 or newer.
+Requires Python 3.11 or newer and Node.js 20 or newer.
 
 ```bash
 python -m venv .venv
 python -m pip install -e ".[dev]"
+npm ci
 python -m uvicorn llm_router.app:app --app-dir src --reload
 ```
 
@@ -43,8 +44,13 @@ ruff format --check .
 ruff check .
 mypy
 pytest tests/unit tests/integration --cov=llm_router --cov-report=term-missing
+npx playwright install chromium
+npm run test:e2e
 docker build -t local-llm-router:dev .
 ```
+
+CI reports unit/static analysis, integration, and Playwright end-to-end tests separately.
+The release-image build starts only after all three test layers pass.
 
 ## Runtime settings
 
