@@ -61,6 +61,28 @@ Successful PR CI runs are merged automatically only for trusted same-repository 
 and Dependabot. Forks, drafts, and untrusted author associations are deliberately skipped;
 repository branch-protection and review requirements continue to apply.
 
+## Serving backends
+
+`ROUTER_BACKEND=mock` (the default) keeps CI deterministic and GPU-free.
+`ROUTER_BACKEND=vllm` dispatches to a vLLM OpenAI-compatible server; a selected LoRA
+adapter is served by name over the shared base model. An unreachable or failing engine
+returns `502` with retry guidance, and `/readyz` fails while the engine is unhealthy.
+
+Set `"stream": true` to receive OpenAI-compatible `text/event-stream` chunks. Streamed
+results are cached under the same eligibility rules and replayed as chunks on a hit.
+
+### Ray Serve deployment
+
+[`config/ray-serve.yaml`](config/ray-serve.yaml) is generated from the catalog, never
+hand-edited, and verified by a test:
+
+```bash
+python -m llm_router.serving > config/ray-serve.yaml
+```
+
+It carries per-tier autoscaling (latency-sensitive tiers keep a warm replica), GPU pool
+placement, tensor parallelism, prefix caching, quantization, and Multi-LoRA settings.
+
 ## Model registry
 
 [`config/registry.yaml`](config/registry.yaml) is the governed source of truth for what may
@@ -127,6 +149,9 @@ All settings use the `ROUTER_` prefix.
 | `ROUTER_ADMISSION_TIMEOUT_SECONDS` | `0.25` | Time allowed to wait for capacity. |
 | `ROUTER_QUOTA_REQUESTS_PER_MINUTE` | `120` | Per-token sliding-window quota. |
 | `ROUTER_EXTERNAL_FALLBACK_ENABLED` | `false` | Operator gate for external fallback. |
+| `ROUTER_BACKEND` | `mock` | `mock` or `vllm`. |
+| `ROUTER_VLLM_BASE_URL` | `http://127.0.0.1:8001` | vLLM OpenAI-compatible endpoint. |
+| `ROUTER_BACKEND_TIMEOUT_SECONDS` | `60` | Per-request engine timeout. |
 | `ROUTER_REGISTRY_PATH` | `config/registry.yaml` | Governed model catalog; built-in profiles are used if absent. |
 | `ROUTER_ROUTING_POLICY_VERSION` | `v1` | Invalidates router and response caches when changed. |
 | `ROUTER_CACHE_ENABLED` | `true` | Master switch for all cache tiers. |
