@@ -83,6 +83,31 @@ python -m llm_router.serving > config/ray-serve.yaml
 It carries per-tier autoscaling (latency-sensitive tiers keep a warm replica), GPU pool
 placement, tensor parallelism, prefix caching, quantization, and Multi-LoRA settings.
 
+## Deployment topology
+
+[`deploy/kubernetes`](deploy/kubernetes) holds the namespaced manifests: gateway
+Deployment and Service, GPU serving pool, Redis, KEDA autoscaling on queue depth and p95
+latency, a Prometheus `ServiceMonitor`, network policy, and credentials sourced from the
+cluster secret manager. No secret material is committed. Unit tests enforce the contract:
+unprivileged workloads, digest-pinned images, bounded resources, real probes, GPU pool
+pinning, and `/metrics` reachable only from monitoring.
+
+```bash
+kubectl apply -k deploy/kubernetes
+```
+
+Stateless ingress scales separately from GPU replicas. Set `ROUTER_REDIS_URL` so cache and
+quota state are shared once the gateway runs more than one replica; without it both are
+in-process and correct for a single replica only. Install the client with the extra:
+
+```bash
+python -m pip install -e ".[redis]"
+```
+
+CD renders the canary plan (with its rollback target and triggers), verifies
+`config/ray-serve.yaml` against the catalog, and validates the manifests with kubeconform.
+Applying to a cluster stays disabled until a deployment destination is configured.
+
 ## Model registry
 
 [`config/registry.yaml`](config/registry.yaml) is the governed source of truth for what may
@@ -149,6 +174,7 @@ All settings use the `ROUTER_` prefix.
 | `ROUTER_ADMISSION_TIMEOUT_SECONDS` | `0.25` | Time allowed to wait for capacity. |
 | `ROUTER_QUOTA_REQUESTS_PER_MINUTE` | `120` | Per-token sliding-window quota. |
 | `ROUTER_EXTERNAL_FALLBACK_ENABLED` | `false` | Operator gate for external fallback. |
+| `ROUTER_REDIS_URL` | _(empty)_ | Shared cache and quota state; in-process when empty. |
 | `ROUTER_BACKEND` | `mock` | `mock` or `vllm`. |
 | `ROUTER_VLLM_BASE_URL` | `http://127.0.0.1:8001` | vLLM OpenAI-compatible endpoint. |
 | `ROUTER_BACKEND_TIMEOUT_SECONDS` | `60` | Per-request engine timeout. |
