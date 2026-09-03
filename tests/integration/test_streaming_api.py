@@ -7,6 +7,7 @@ from llm_router.app import create_app
 from llm_router.backends import BackendResult, BackendUnavailableError
 from llm_router.config import Settings
 from llm_router.models import ChatCompletionRequest, RouteDecision
+from tests.conftest import FakeRedis
 
 HEADERS = {"Authorization": "Bearer stream-key"}
 BODY = {
@@ -119,3 +120,21 @@ def test_vllm_backend_is_selected_by_configuration() -> None:
 
     assert response.status_code == 502
     assert response.json()["error"]["type"] == "backend_unavailable"
+
+
+def test_shared_redis_state_backs_cache_and_quota(fake_redis: FakeRedis) -> None:
+    client_state = fake_redis
+    settings = Settings(api_keys="stream-key", quota_requests_per_minute=1)
+    with TestClient(create_app(settings, redis_client=client_state)) as client:
+        body = {
+            "model": "auto",
+            "messages": [{"role": "user", "content": "shared state probe"}],
+            "routing": {"privacy": "public"},
+        }
+        first = client.post("/v1/chat/completions", headers=HEADERS, json=body)
+        second = client.post("/v1/chat/completions", headers=HEADERS, json=body)
+
+    assert first.status_code == 200
+    assert second.status_code == 429
+    assert any(key.startswith("llmr:c:") for key in client_state.values)
+    assert any(key.startswith("llmr:q:") for key in client_state.counters)
