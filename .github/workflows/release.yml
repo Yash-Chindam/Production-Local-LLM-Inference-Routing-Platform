@@ -99,7 +99,7 @@ jobs:
             echo "$VERSION already exists; skipping."
             exit 0
           fi
-          git tag -a "$VERSION" "$RELEASE_SHA" -m "$VERSION"
+          git tag "$VERSION" "$RELEASE_SHA"
           git push origin "$VERSION"
           gh release create "$VERSION" \
             --repo "${{ github.repository }}" \
