@@ -1,0 +1,25 @@
+# Stateless ingress scales on queue depth, independent of GPU replicas.
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: llm-gateway
+  namespace: llm-routing
+spec:
+  scaleTargetRef:
+    name: llm-gateway
+  minReplicaCount: 2
+  maxReplicaCount: 20
+  cooldownPeriod: 120
+  triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: http://prometheus.monitoring.svc.cluster.local:9090
+        metricName: router_queued_requests
+        query: sum(router_queued_requests{namespace="llm-routing"})
+        threshold: "4"
+    - type: prometheus
+      metadata:
+        serverAddress: http://prometheus.monitoring.svc.cluster.local:9090
+        metricName: router_request_latency_p95
+        query: histogram_quantile(0.95, sum(rate(router_request_latency_seconds_bucket[5m])) by (le))
+        threshold: "2"

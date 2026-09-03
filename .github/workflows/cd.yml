@@ -40,3 +40,48 @@ jobs:
           path: ${{ runner.temp }}/local-llm-router.tar
           retention-days: 14
 
+
+  deployment-plan:
+    # Renders the deployment topology and the canary plan that names its own
+    # rollback target. Applying to a cluster stays disabled until a deployment
+    # destination is configured; nothing here contacts a live environment.
+    needs: release-artifact
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.event.workflow_run.head_sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_REF }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -e ".[dev]"
+      - name: Verify the serving configuration matches the catalog
+        run: python -m llm_router.serving > /tmp/ray-serve.yaml && diff -u config/ray-serve.yaml /tmp/ray-serve.yaml
+      - name: Render the canary and rollback plan
+        run: |
+          python - <<'PY' > canary-plan.json
+          import json
+          from llm_router.registry import load_registry
+          from llm_router.serving import canary_config
+          registry = load_registry("config/registry.yaml")
+          production = [item for item in registry.deployments if item.stage.value == "production"]
+          plan = canary_config(registry, production[0].id)
+          plan["release_ref"] = "${{ env.RELEASE_REF }}"
+          print(json.dumps(plan, indent=2))
+          PY
+      - name: Validate the Kubernetes manifests
+        run: |
+          curl -sSLo kubeconform.tar.gz https://github.com/yannh/kubeconform/releases/download/v0.7.0/kubeconform-linux-amd64.tar.gz
+          tar xf kubeconform.tar.gz kubeconform
+          ./kubeconform -strict -ignore-missing-schemas -summary deploy/kubernetes
+      - uses: actions/upload-artifact@v7
+        with:
+          name: deployment-plan-${{ env.RELEASE_REF }}
+          path: |
+            canary-plan.json
+            config/ray-serve.yaml
+            deploy/kubernetes
+          retention-days: 14
