@@ -1,0 +1,5 @@
+{"id": "extract-001", "task": "extraction", "prompt": "Extract the invoice number and total from: Invoice INV-4417, total 182.50 USD. Reply as JSON.", "expected": "{\"invoice_number\": \"INV-4417\", \"total\": \"182.50 USD\"}", "structured": true}
+{"id": "extract-002", "task": "extraction", "prompt": "Extract the claim id from: Claim CLM-9921 was filed on 2026-04-02. Reply as JSON.", "expected": "{\"claim_id\": \"CLM-9921\"}", "structured": true}
+{"id": "classify-001", "task": "classification", "prompt": "Classify this ticket as billing, technical, or other: my card was charged twice.", "expected": "billing"}
+{"id": "classify-002", "task": "classification", "prompt": "Classify this ticket as billing, technical, or other: the dashboard returns a 500 error.", "expected": "technical"}
+{"id": "summarize-001", "task": "summarization", "prompt": "Summarize: revenue grew in every region while support costs fell for the third quarter running.", "expected": "revenue grew in every region and support costs fell"}
