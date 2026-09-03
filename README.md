@@ -61,6 +61,18 @@ Successful PR CI runs are merged automatically only for trusted same-repository 
 and Dependabot. Forks, drafts, and untrusted author associations are deliberately skipped;
 repository branch-protection and review requirements continue to apply.
 
+### Releases
+
+Every push to `main` that passes CI is scanned for
+[Conventional Commits](https://www.conventionalcommits.org/) since the last tag. A `feat:`
+commit earns a minor release, `fix:` a patch release, and a declared breaking change
+(`type!:` or a `BREAKING CHANGE` footer) always wins with a major release. A range with none
+of those — only `docs:`, `ci:`, `build:`, `test:`, or `chore:` commits, as with most
+Dependabot bumps — is deliberately left unreleased. When a release is warranted, the
+workflow tags `main` (`vMAJOR.MINOR.PATCH`) and publishes a GitHub Release with
+auto-generated notes. Tags are never created by hand, and nothing is ever tagged off a
+branch other than `main`.
+
 ## Serving backends
 
 `ROUTER_BACKEND=mock` (the default) keeps CI deterministic and GPU-free.
