@@ -163,6 +163,32 @@ dependent entry. Responses carry `X-Cache: miss | exact | semantic`.
 | Semantic | Disabled by default; requires `public` privacy, deterministic generation, and an extraction, classification, or summarization task. |
 | Router decision | Reuses stable task classification; cleared when the policy version changes. |
 
+## Evaluation
+
+Every optimization is graded against a committed dataset in
+[`benchmarks/datasets`](benchmarks/datasets), never against sampled production traffic.
+`execute()` runs each case through a caller-supplied transport and times it; `build_report()`
+turns the outcomes into one `EvaluationReport` that always pairs quality with latency and
+GPU cost, never one alone.
+
+```bash
+python -c "
+from llm_router.evaluation import build_report, execute, load_dataset
+cases = load_dataset('benchmarks/datasets/extraction-v1.jsonl')
+outcomes = execute(cases, lambda case: (case.expected, True, 0.05))
+print(build_report(outcomes, model_id='small-specialist', model_revision='rev-1').summary())
+"
+```
+
+- Constrained tasks (extraction, classification) are scored by exact match, generative tasks
+  by token overlap, and structured tasks score zero when the output is not valid JSON.
+- `compare()` rejects a variant that buys latency or throughput with a quality or
+  structured-validity regression, however small; `render_comparison()` prints the verdict
+  with every regression reason.
+- [`benchmarks/workloads`](benchmarks/workloads) holds reproducible k6 steady and burst load
+  definitions. The burst scenario asserts bounded queue behavior — an explicit `429`/`503`
+  rejection — rather than unbounded tail latency.
+
 ## Runtime settings
 
 All settings use the `ROUTER_` prefix.
