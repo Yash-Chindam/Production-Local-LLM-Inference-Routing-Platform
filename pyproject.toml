@@ -36,6 +36,7 @@ packages = ["src/llm_router"]
 [tool.pytest.ini_options]
 addopts = "-ra --strict-config --strict-markers"
 testpaths = ["tests"]
+pythonpath = ["."]
 markers = [
   "integration: tests that exercise multiple application components",
 ]
