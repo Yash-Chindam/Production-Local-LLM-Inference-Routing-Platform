@@ -8,6 +8,7 @@ from llm_router.evaluation import (
     EvaluationError,
     build_report,
     compare,
+    execute,
     load_dataset,
     percentile,
     render_comparison,
@@ -146,6 +147,43 @@ def test_report_uses_wall_clock_for_throughput_when_supplied() -> None:
     built = build_report([outcome()], model_id="m", model_revision="r", wall_clock_seconds=2.0)
 
     assert built.throughput_rps == pytest.approx(0.5)
+
+
+def test_execute_times_each_case_and_reports_the_transport_result() -> None:
+    cases = load_dataset(DATASET)
+
+    def invoke(item: EvaluationCase) -> tuple[str, bool, float]:
+        return item.expected, True, 0.2
+
+    outcomes = execute(cases, invoke)
+
+    assert len(outcomes) == len(cases)
+    assert [outcome.case.id for outcome in outcomes] == [item.id for item in cases]
+    assert all(
+        outcome.output == item.expected for outcome, item in zip(outcomes, cases, strict=True)
+    )
+    assert all(outcome.succeeded for outcome in outcomes)
+    assert all(outcome.gpu_seconds == 0.2 for outcome in outcomes)
+    assert all(outcome.latency_ms >= 0.0 for outcome in outcomes)
+
+
+def test_execute_carries_a_failed_transport_call_into_the_outcome() -> None:
+    failing = case(id="broken")
+
+    outcomes = execute([failing], lambda item: ("", False, 0.0))
+
+    assert outcomes[0].succeeded is False
+    assert outcomes[0].output == ""
+
+
+def test_execute_feeds_build_report_directly() -> None:
+    cases = load_dataset(DATASET)
+
+    outcomes = execute(cases, lambda item: (item.expected, True, 0.1))
+    built = build_report(outcomes, model_id="small-specialist", model_revision="rev-1")
+
+    assert built.cases == len(cases)
+    assert built.quality_score == 1.0
 
 
 def test_quantized_variant_is_rejected_when_quality_falls() -> None:

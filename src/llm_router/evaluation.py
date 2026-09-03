@@ -8,7 +8,8 @@ dataset and workload definitions.
 
 import json
 import math
-from collections.abc import Iterable, Sequence
+import time
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -171,6 +172,33 @@ def build_report(
         ),
         metadata=metadata or {},
     )
+
+
+def execute(
+    cases: Iterable[EvaluationCase],
+    invoke: Callable[[EvaluationCase], tuple[str, bool, float]],
+) -> tuple[CaseOutcome, ...]:
+    """Run every case through a caller-supplied transport and time each one.
+
+    The transport returns the produced text, whether the request succeeded, and
+    the GPU seconds it consumed; latency is measured here so every harness run
+    reports it the same way.
+    """
+
+    outcomes: list[CaseOutcome] = []
+    for case in cases:
+        started = time.perf_counter()
+        output, succeeded, gpu_seconds = invoke(case)
+        outcomes.append(
+            CaseOutcome(
+                case=case,
+                output=output,
+                latency_ms=(time.perf_counter() - started) * 1000,
+                gpu_seconds=gpu_seconds,
+                succeeded=succeeded,
+            )
+        )
+    return tuple(outcomes)
 
 
 @dataclass(frozen=True)
