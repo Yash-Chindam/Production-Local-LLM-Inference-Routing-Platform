@@ -44,4 +44,5 @@ jobs:
           gh pr merge "$PR_NUMBER" --repo "$REPOSITORY" --merge --delete-branch
           merge_sha="$(gh pr view "$PR_NUMBER" --repo "$REPOSITORY" --json mergeCommit --jq '.mergeCommit.oid')"
           gh workflow run cd.yml --repo "$REPOSITORY" --ref main -f ref="$merge_sha"
+          gh workflow run release.yml --repo "$REPOSITORY" --ref main -f ref="$merge_sha"
 

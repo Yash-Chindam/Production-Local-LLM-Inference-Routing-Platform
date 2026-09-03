@@ -4,21 +4,32 @@ on:
   workflow_run:
     workflows: [CI]
     types: [completed]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Commit SHA to evaluate and tag if warranted
+        required: true
+        type: string
 
 permissions:
   contents: write
 
 jobs:
   tag-and-release:
-    # Chains off the same trusted CI-on-main signal as CD, so a release only
-    # ever follows a green build of a commit that actually landed on main.
+    # The workflow_run branch is belt-and-suspenders for a natural push to
+    # main; in practice merges here are performed by auto-merge.yml using
+    # GITHUB_TOKEN, and GitHub deliberately does not let GITHUB_TOKEN pushes
+    # trigger further push-triggered workflow runs (it would recurse), so CI
+    # never reports a push event for a merge commit. auto-merge.yml dispatches
+    # this workflow explicitly for the same reason it dispatches cd.yml.
     if: >-
-      github.event.workflow_run.conclusion == 'success' &&
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.head_branch == 'main' &&
-      github.event.workflow_run.event == 'push'
+      github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
     env:
-      RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
+      RELEASE_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.event.workflow_run.head_sha }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v7
