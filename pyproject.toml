@@ -14,7 +14,7 @@ dependencies = [
   "prometheus-client>=0.26.0,<1",
   "pyyaml>=6.0.3,<7",
   "pydantic-settings>=2.15.0,<3",
-  "uvicorn[standard]>=0.52.4,<1",
+  "uvicorn[standard]>=0.53.0,<1",
 ]
 
 [project.optional-dependencies]
