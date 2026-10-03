@@ -143,6 +143,40 @@ be served. A request can never introduce a model path, revision, or adapter.
 Send `routing.domain` to request a domain adapter; the router applies the promoted adapter
 with the largest measured quality gain for that base revision and task, or none at all.
 
+## Tenants
+
+What a caller may use is governance and lives in the catalog; the credential that proves which
+tenant is calling stays in the environment and is never committed.
+
+```bash
+ROUTER_TENANT_KEYS="support-tooling:<key>,clinical-research:<key>"
+```
+
+Keys listed bare in `ROUTER_API_KEYS` belong to the `default` tenant, so an existing deployment
+keeps working unchanged. Each tenant in [`config/registry.yaml`](config/registry.yaml) may set:
+
+| Field | Effect |
+|---|---|
+| `permitted_tiers` / `permitted_models` | Hard filter applied before scoring; it can never be outscored. Empty means unrestricted. |
+| `quota_requests_per_minute` | The tenant's own limit; absent defers to the platform default. |
+| `minimum_privacy` | A floor, never a ceiling. The request is raised to it before anything reads the class. |
+| `allow_external_fallback` | `false` denies external routing outright; absent defers to platform policy. |
+| `quality_floor` | Raises, and never lowers, the floor a request asked for. |
+
+An absent field never tightens an existing deployment: it defers to platform policy rather than
+implying a restriction.
+
+Quota and cache are scoped to the tenant rather than the credential, so rotating a key neither
+resets a quota nor orphans a cache, and two keys for one tenant draw on one quota.
+
+The privacy floor is applied before the cache lookup, not at routing. A tenant handling regulated
+data cannot declare its traffic `public` and so become eligible for external routing or semantic
+reuse, and it can never read an entry another tenant stored under `public`. When the class is
+raised the route reason says so — the change is attributed, not silent.
+
+A request that no entitled model can serve is refused with `422` rather than downgraded to a
+model never validated for the task.
+
 ## Observability
 
 `GET /metrics` returns Prometheus exposition text and is intentionally unauthenticated so

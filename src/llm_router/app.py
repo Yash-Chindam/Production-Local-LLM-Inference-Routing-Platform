@@ -5,7 +5,9 @@ import time
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Annotated
 
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
@@ -49,8 +51,27 @@ from llm_router.models import (
 )
 from llm_router.observability import Metrics
 from llm_router.redis_state import RedisCacheStore, RedisFixedWindowQuota, RedisLike
-from llm_router.registry import Registry, RegistryError, catalog_revisions, load_registry
+from llm_router.registry import (
+    Registry,
+    RegistryError,
+    TenantRecord,
+    catalog_revisions,
+    load_registry,
+    strictest_privacy,
+)
 from llm_router.routing import NoEligibleModelError, Router, default_model_profiles
+
+
+@dataclass(frozen=True)
+class Principal:
+    """The authenticated caller: which tenant, and which credential proved it.
+
+    Quota and cache scope use the tenant rather than the credential, so
+    rotating a key neither resets a tenant's quota nor orphans its cache.
+    """
+
+    tenant_id: str
+    credential_fingerprint: str
 
 
 def _redis_client(settings: Settings) -> RedisLike | None:
@@ -162,7 +183,7 @@ def create_app(
         lifespan=lifespan,
     )
 
-    async def authenticate(authorization: str | None = Header(default=None)) -> str:
+    async def authenticate(authorization: str | None = Header(default=None)) -> Principal:
         prefix = "Bearer "
         if authorization is None or not authorization.startswith(prefix):
             raise HTTPException(
@@ -171,16 +192,25 @@ def create_app(
                 headers={"WWW-Authenticate": "Bearer"},
             )
         token = authorization.removeprefix(prefix)
-        if not any(
-            secrets.compare_digest(token, candidate)
-            for candidate in runtime_settings.accepted_api_keys
-        ):
+        # Every candidate is compared so the work does not depend on which
+        # credential matched, and the match itself stays constant time.
+        matched: str | None = None
+        for candidate, tenant_id in runtime_settings.tenant_by_key.items():
+            if secrets.compare_digest(token, candidate):
+                matched = tenant_id
+        if matched is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="invalid bearer token",
                 headers={"WWW-Authenticate": "Bearer"},
             )
-        return hashlib.sha256(token.encode()).hexdigest()
+        return Principal(
+            tenant_id=matched,
+            credential_fingerprint=hashlib.sha256(token.encode()).hexdigest(),
+        )
+
+    def _entitlement(principal: Principal) -> TenantRecord | None:
+        return catalog.tenant(principal.tenant_id) if catalog is not None else None
 
     @app.exception_handler(NoEligibleModelError)
     async def no_model_handler(_: Request, error: NoEligibleModelError) -> JSONResponse:
@@ -409,12 +439,15 @@ def create_app(
             scope = semantic_cache.scope(payload, tenant=tenant, model_revision=catalog_version)
             semantic_cache.store(scope, prompt, entry)
 
-    async def _consume_quota(subject: str) -> None:
+    async def _consume_quota(subject: str, tenant: TenantRecord | None) -> None:
+        # A tenant may carry its own limit; absent one the platform default
+        # applies, which is why None means "defer" rather than "unlimited".
+        limit = tenant.quota_requests_per_minute if tenant is not None else None
         if shared_quota is None:
-            await quota.consume(subject)
+            await quota.consume(subject, limit=limit)
             return
         window = int(time.time() // 60)
-        if not await shared_quota.consume(subject, window=window):
+        if not await shared_quota.consume(subject, window=window, limit=limit):
             raise QuotaExceededError("request quota exceeded")
 
     def _route_headers(decision: RouteDecision, cache_state: str) -> dict[str, str]:
@@ -486,10 +519,31 @@ def create_app(
     async def chat_completions(
         payload: ChatCompletionRequest,
         response: Response,
-        subject: str = Depends(authenticate),
+        principal: Annotated[Principal, Depends(authenticate)],
     ) -> ChatCompletionResponse | StreamingResponse:
         started = time.perf_counter()
-        await _consume_quota(subject)
+        tenant = _entitlement(principal)
+        # Quota and cache are scoped to the tenant, not the credential, so
+        # rotating a key neither resets a quota nor orphans a cache.
+        subject = principal.tenant_id
+        await _consume_quota(subject, tenant)
+
+        declared_privacy = payload.routing.privacy
+        if tenant is not None:
+            effective_privacy = strictest_privacy(declared_privacy, tenant.minimum_privacy)
+            if effective_privacy is not declared_privacy:
+                # Raised before anything reads the class, so cache eligibility,
+                # the cache key, and routing all agree on one value and a
+                # public-declared request can never reach restricted entries.
+                payload = payload.model_copy(
+                    update={
+                        "routing": payload.routing.model_copy(update={"privacy": effective_privacy})
+                    }
+                )
+        privacy_raised_from = (
+            declared_privacy if payload.routing.privacy is not declared_privacy else None
+        )
+
         prompt = payload.prompt
         cache_key = build_cache_key(
             payload, tenant=subject, model_revision=catalog_version, prompt=prompt
@@ -517,7 +571,18 @@ def create_app(
 
         cached_task = decision_cache.get(prompt) if runtime_settings.cache_enabled else None
         telemetry.record_cache_event("router", "hit" if cached_task is not None else "miss")
-        decision = router.select(payload, task=cached_task)
+        decision = router.select(
+            payload,
+            task=cached_task,
+            permitted_models=(
+                catalog.permitted_models_for(tenant) if catalog is not None else None
+            ),
+            quality_floor=tenant.quality_floor if tenant is not None else 0.0,
+            tenant_allows_external=(
+                tenant.allow_external_fallback is not False if tenant is not None else True
+            ),
+            privacy_raised_from=privacy_raised_from,
+        )
         if runtime_settings.cache_enabled:
             decision_cache.set(prompt, decision.task)
         telemetry.record_route(decision, privacy=payload.routing.privacy.value)

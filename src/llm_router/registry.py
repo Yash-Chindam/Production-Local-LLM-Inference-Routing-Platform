@@ -13,7 +13,21 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, Field, model_validator
 
-from llm_router.models import ModelProfile, TaskClass
+from llm_router.models import ModelProfile, PrivacyClass, TaskClass
+
+# Privacy classes are ordered so a tenant floor can be compared with what a
+# request declared; a floor may only ever raise the effective class.
+PRIVACY_RANK: dict[PrivacyClass, int] = {
+    PrivacyClass.PUBLIC: 0,
+    PrivacyClass.PRIVATE: 1,
+    PrivacyClass.RESTRICTED: 2,
+}
+
+
+def strictest_privacy(left: PrivacyClass, right: PrivacyClass) -> PrivacyClass:
+    """Return whichever class is more sensitive."""
+
+    return left if PRIVACY_RANK[left] >= PRIVACY_RANK[right] else right
 
 
 class Quantization(StrEnum):
@@ -148,6 +162,36 @@ class DeploymentRevision(BaseModel):
     previous_revision_id: str | None = None
 
 
+class TenantRecord(BaseModel):
+    """What one caller is entitled to: which models, how much, how sensitive.
+
+    Section 7.1 makes resolving tenant quotas and permitted model classes a
+    gateway responsibility, and section 14 requires both to be restricted per
+    tenant. Entitlements are governance, so they live in the catalog; the
+    credentials that bind a caller to a tenant stay in the environment and are
+    never committed here.
+    """
+
+    id: str
+    description: str = ""
+    # Empty means every servable tier or model, so a tenant that needs no
+    # restriction does not have to enumerate the catalog.
+    permitted_tiers: frozenset[ModelTier] = frozenset()
+    permitted_models: frozenset[str] = frozenset()
+    # None defers to the platform default rather than implying "unlimited".
+    quota_requests_per_minute: int | None = Field(default=None, ge=1)
+    # A floor, never a ceiling: a tenant handling regulated data must not be
+    # able to declare its traffic public and so become eligible for external
+    # routing or semantic reuse. Raising is always safe; lowering never happens.
+    minimum_privacy: PrivacyClass = PrivacyClass.PUBLIC
+    # None defers to platform policy, which already requires operator
+    # enablement and per-request opt-in; false denies external routing to this
+    # tenant outright. Absence never tightens an existing deployment, matching
+    # how an absent quota defers rather than meaning "none".
+    allow_external_fallback: bool | None = None
+    quality_floor: float = Field(default=0.0, ge=0.0, le=1.0)
+
+
 class RoutePolicy(BaseModel):
     """Operator-owned routing constraints applied before model scoring."""
 
@@ -171,6 +215,7 @@ class Registry(BaseModel):
     adapters: tuple[AdapterProfile, ...] = ()
     benchmarks: tuple[BenchmarkRun, ...] = ()
     deployments: tuple[DeploymentRevision, ...] = ()
+    tenants: tuple[TenantRecord, ...] = ()
     policy: RoutePolicy = RoutePolicy()
 
     @model_validator(mode="after")
@@ -185,7 +230,40 @@ class Registry(BaseModel):
                     f"adapter {adapter.id} references unknown base "
                     f"{adapter.base_model_id}@{adapter.base_revision}"
                 )
+        tenant_ids = {tenant.id for tenant in self.tenants}
+        if len(tenant_ids) != len(self.tenants):
+            raise RegistryError("duplicate tenant identifiers in catalog")
+        for tenant in self.tenants:
+            unknown = tenant.permitted_models - model_ids
+            if unknown:
+                raise RegistryError(
+                    f"tenant {tenant.id} permits unknown model(s): {', '.join(sorted(unknown))}"
+                )
         return self
+
+    def tenant(self, tenant_id: str) -> TenantRecord | None:
+        return next((record for record in self.tenants if record.id == tenant_id), None)
+
+    def permitted_models_for(self, tenant: TenantRecord | None) -> frozenset[str] | None:
+        """Resolve a tenant's entitlement to concrete model ids.
+
+        Returns None when the tenant is unrestricted, which keeps the router's
+        hard filter free of tier lookups. An entitlement that resolves to
+        nothing is returned as an empty set so the request is refused rather
+        than silently widened to the whole catalog.
+        """
+
+        if tenant is None:
+            return None
+        if not tenant.permitted_tiers and not tenant.permitted_models:
+            return None
+        eligible = {
+            card.id
+            for card in self.servable_models()
+            if (not tenant.permitted_tiers or card.tier in tenant.permitted_tiers)
+            and (not tenant.permitted_models or card.id in tenant.permitted_models)
+        }
+        return frozenset(eligible)
 
     def servable_models(self) -> tuple[ModelCard, ...]:
         return tuple(

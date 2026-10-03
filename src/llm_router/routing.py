@@ -95,10 +95,22 @@ class Router:
         )
 
     def select(
-        self, request: ChatCompletionRequest, *, task: TaskClass | None = None
+        self,
+        request: ChatCompletionRequest,
+        *,
+        task: TaskClass | None = None,
+        permitted_models: frozenset[str] | None = None,
+        quality_floor: float = 0.0,
+        tenant_allows_external: bool = True,
+        privacy_raised_from: PrivacyClass | None = None,
     ) -> RouteDecision:
         task = task if task is not None else self.classify_task(request)
         estimated_tokens = max(1, len(request.prompt) // 4) + request.max_tokens
+        # The request arrives carrying its effective privacy class: the gateway
+        # raises it to the tenant floor before anything reads it, including the
+        # caches, so there is no declared-versus-effective split to get wrong.
+        effective_privacy = request.routing.privacy
+        floor = max(request.routing.quality_floor, quality_floor)
 
         candidates = [
             profile
@@ -106,9 +118,12 @@ class Router:
             if profile.healthy
             and task in profile.supported_tasks
             and estimated_tokens <= profile.context_limit
-            and profile.quality >= request.routing.quality_floor
-            and self._privacy_allows(profile, request.routing.privacy)
-            and self._external_allows(profile, request)
+            and profile.quality >= floor
+            and self._privacy_allows(profile, effective_privacy)
+            and self._external_allows(profile, request, tenant_allows_external)
+            # A tenant entitlement is a hard restriction, like privacy: it is
+            # applied before scoring and can never be outscored.
+            and (permitted_models is None or profile.id in permitted_models)
         ]
 
         if request.model != "auto":
@@ -117,7 +132,7 @@ class Router:
         if not candidates:
             raise NoEligibleModelError(
                 "no healthy model satisfies capability, context, quality, "
-                "privacy, and fallback policy"
+                "privacy, tenant entitlement, and fallback policy"
             )
 
         def score(profile: ModelProfile) -> float:
@@ -147,9 +162,15 @@ class Router:
         )
         reason = (
             f"selected highest policy score among {len(candidates)} eligible model(s); "
-            f"task={task.value}, privacy={request.routing.privacy.value}, "
+            f"task={task.value}, privacy={effective_privacy.value}, "
             f"latency_tier={request.routing.latency_tier}"
         )
+        if privacy_raised_from is not None:
+            # Raising the class is a policy decision and is attributed rather
+            # than applied silently.
+            reason += f"; raised from declared {privacy_raised_from.value} by the tenant floor"
+        if permitted_models is not None:
+            reason += f"; restricted to {len(permitted_models)} model(s) by tenant entitlement"
         if adapter is not None:
             reason += (
                 f"; applied adapter {adapter.id} for domain {adapter.domain} "
@@ -169,7 +190,16 @@ class Router:
     def _privacy_allows(profile: ModelProfile, privacy: PrivacyClass) -> bool:
         return profile.local or privacy == PrivacyClass.PUBLIC
 
-    def _external_allows(self, profile: ModelProfile, request: ChatCompletionRequest) -> bool:
+    def _external_allows(
+        self,
+        profile: ModelProfile,
+        request: ChatCompletionRequest,
+        tenant_allows_external: bool = True,
+    ) -> bool:
+        """External routing needs operator, tenant, and request agreement."""
+
         return profile.local or (
-            self.external_fallback_enabled and request.routing.allow_external_fallback
+            self.external_fallback_enabled
+            and tenant_allows_external
+            and request.routing.allow_external_fallback
         )

@@ -12,6 +12,11 @@ class Settings(BaseSettings):
 
     environment: str = "development"
     api_keys: str = "dev-key"
+    # Binds credentials to tenant ids as "tenant:key,tenant:key". Entitlements
+    # are governance and live in the catalog; the secret that proves which
+    # tenant is calling stays in the environment and is never committed.
+    tenant_keys: str = ""
+    default_tenant: str = "default"
     max_concurrency: int = Field(default=32, ge=1)
     admission_timeout_seconds: float = Field(default=0.25, gt=0)
     quota_requests_per_minute: int = Field(default=120, ge=1)
@@ -36,7 +41,24 @@ class Settings(BaseSettings):
 
     @property
     def accepted_api_keys(self) -> frozenset[str]:
-        return frozenset(key.strip() for key in self.api_keys.split(",") if key.strip())
+        return frozenset(self.tenant_by_key)
+
+    @property
+    def tenant_by_key(self) -> dict[str, str]:
+        """Map every accepted credential to the tenant it authenticates.
+
+        Keys listed without a tenant belong to the default tenant, so an
+        existing ROUTER_API_KEYS deployment keeps working unchanged.
+        """
+
+        bindings = {
+            key.strip(): self.default_tenant for key in self.api_keys.split(",") if key.strip()
+        }
+        for entry in self.tenant_keys.split(","):
+            tenant, separator, key = entry.partition(":")
+            if separator and tenant.strip() and key.strip():
+                bindings[key.strip()] = tenant.strip()
+        return bindings
 
 
 @lru_cache
