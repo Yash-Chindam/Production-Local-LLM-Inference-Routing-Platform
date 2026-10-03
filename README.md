@@ -160,7 +160,38 @@ in-cluster scrapers can read it; restrict it with network policy rather than a b
 | `router_queue_delay_prediction_error_ms` | Predicted versus observed queue delay. |
 | `router_rejections_total` | Quota, overload, and policy rejections. |
 | `router_cache_events_total` | Cache lookups by cache and result. |
-| `router_model_load_seconds` | Model load and cold-start duration. |
+| `router_model_load_seconds` | Measured engine load and cold-start duration. |
+| `router_observed_quality` / `router_quality_prediction_error` | Observed quality where it is checkable, against what routing predicted. |
+| `router_structured_output_total` | Structured-output responses by validity. |
+
+Engine and accelerator state is pulled through from the serving path on each scrape, so the
+gateway stays the single scrape target and no poller runs when nobody is collecting. The
+gateway reads the engine's own `/metrics` (vLLM's `vllm:*` series, plus `DCGM_FI_DEV_*` from a
+GPU exporter beside it) and republishes:
+
+| Metric | Purpose |
+|---|---|
+| `router_engine_running_requests` | Requests the engine is decoding — its live batch size. |
+| `router_engine_batch_size` | Batch size sampled per scrape; the average is `_sum / _count`. |
+| `router_engine_waiting_requests` | Requests queued inside the engine, not yet batched. |
+| `router_engine_kv_cache_occupancy_ratio` | Fraction of the KV cache allocated. |
+| `router_engine_preemptions_total` | Requests preempted under KV-cache pressure. |
+| `router_gpu_utilization_ratio` | Accelerator utilization. |
+| `router_gpu_memory_used_bytes` / `router_gpu_memory_total_bytes` | Framebuffer memory in use and installed. |
+
+An unreachable engine costs a scrape its engine series, never an error: a missing sample stays
+missing rather than being reported as zero.
+
+Live traffic is ungraded, so the only quality signal observable in production is whether a
+request that declared `routing.structured` actually returned parseable JSON. That is recorded
+as an observed quality of 1 or 0 and compared with the quality routing predicted for the model
+it picked. Full task-level quality comes from the offline harness below, never from sampled
+traffic.
+
+Cold start is measured rather than configured: `/readyz` is the one place that sees the engine
+go from loading to serving, so the duration of that window is observed there. The window
+reopens on every later recovery, so a reload after an out-of-memory eviction or a lost node is
+measured too — not only the first start.
 
 ## Caching
 
