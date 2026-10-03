@@ -1,0 +1,42 @@
+{"prompt": "Extract the order number and delivery date from this confirmation.", "task": "extraction", "complexity": "low"}
+{"prompt": "Return the patient name and appointment time as JSON.", "task": "extraction", "complexity": "low"}
+{"prompt": "Pull the VAT number out of the supplier letter.", "task": "extraction", "complexity": "low"}
+{"prompt": "Extract the amount due from this bill.", "task": "extraction", "complexity": "low"}
+{"prompt": "Parse the following address into its fields.", "task": "extraction", "complexity": "low"}
+{"prompt": "Extract the serial number and model from the warranty card.", "task": "extraction", "complexity": "low"}
+{"prompt": "Classify this message as complaint, question or praise.", "task": "classification", "complexity": "low"}
+{"prompt": "Choose one label for this support email.", "task": "classification", "complexity": "low"}
+{"prompt": "Is this ticket a bug or a feature request?", "task": "classification", "complexity": "low"}
+{"prompt": "Classify the sentiment of this review.", "task": "classification", "complexity": "low"}
+{"prompt": "Which category does this expense belong to?", "task": "classification", "complexity": "low"}
+{"prompt": "Label this transaction as personal or business.", "task": "classification", "complexity": "low"}
+{"prompt": "According to the documents, what is the cancellation fee?", "task": "rag", "complexity": "medium"}
+{"prompt": "Using the provided context, answer how refunds are issued.", "task": "rag", "complexity": "medium"}
+{"prompt": "Answer only from the passages below: what is the SLA?", "task": "rag", "complexity": "low"}
+{"prompt": "Based on the retrieved context, who signs off the release?", "task": "rag", "complexity": "medium"}
+{"prompt": "Use the provided context to answer the question about holidays.", "task": "rag", "complexity": "medium"}
+{"prompt": "From the documents provided, what is the retention period?", "task": "rag", "complexity": "low"}
+{"prompt": "Summarize the annual review.", "task": "summarization", "complexity": "medium"}
+{"prompt": "Give me a summary of this long email.", "task": "summarization", "complexity": "medium"}
+{"prompt": "Summarise the transcript in five bullet points.", "task": "summarization", "complexity": "medium"}
+{"prompt": "Write a brief summary of the audit findings.", "task": "summarization", "complexity": "medium"}
+{"prompt": "Condense the article into its key points.", "task": "summarization", "complexity": "medium"}
+{"prompt": "Provide a short overview of this policy document.", "task": "summarization", "complexity": "medium"}
+{"prompt": "Reason step by step about why the test fails.", "task": "reasoning", "complexity": "high"}
+{"prompt": "Prove that the algorithm always halts.", "task": "reasoning", "complexity": "high"}
+{"prompt": "Analyze deeply the trade-offs between these two designs.", "task": "reasoning", "complexity": "high"}
+{"prompt": "Work through the puzzle and explain each step.", "task": "reasoning", "complexity": "high"}
+{"prompt": "Deduce the correct ordering from the constraints.", "task": "reasoning", "complexity": "high"}
+{"prompt": "Reason about whether the claim follows from the premises.", "task": "reasoning", "complexity": "high"}
+{"prompt": "Critique this system design.", "task": "critique", "complexity": "high"}
+{"prompt": "Find flaws in this proposal.", "task": "critique", "complexity": "high"}
+{"prompt": "Review this essay and point out its weaknesses.", "task": "critique", "complexity": "medium"}
+{"prompt": "Give a critical review of this architecture.", "task": "critique", "complexity": "high"}
+{"prompt": "What is wrong with this argument?", "task": "critique", "complexity": "high"}
+{"prompt": "Point out the weaknesses in this security plan.", "task": "critique", "complexity": "high"}
+{"prompt": "Hello", "task": "general", "complexity": "low"}
+{"prompt": "Tell me a joke about computers.", "task": "general", "complexity": "low"}
+{"prompt": "What is the capital of Japan?", "task": "general", "complexity": "low"}
+{"prompt": "Write a short poem about the sea.", "task": "general", "complexity": "medium"}
+{"prompt": "Thanks for your help.", "task": "general", "complexity": "low"}
+{"prompt": "Draft an email inviting the team to lunch.", "task": "general", "complexity": "medium"}

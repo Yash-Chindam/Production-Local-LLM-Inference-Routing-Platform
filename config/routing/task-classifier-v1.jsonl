@@ -1,0 +1,185 @@
+{"prompt": "Extract the invoice number and total from this invoice.", "task": "extraction", "complexity": "low", "split": "train"}
+{"prompt": "Extract customer fields", "task": "extraction", "complexity": "low", "split": "train"}
+{"prompt": "Extract the claim id from the note below and reply as JSON.", "task": "extraction", "complexity": "low", "split": "train"}
+{"prompt": "Pull out every date mentioned in the contract and return them as a JSON array.", "task": "extraction", "complexity": "medium", "split": "train"}
+{"prompt": "Extract the fields from this purchase order: vendor, amount, due date.", "task": "extraction", "complexity": "low", "split": "train"}
+{"prompt": "Return the sender, recipient and subject of this email as JSON.", "task": "extraction", "complexity": "low", "split": "train"}
+{"prompt": "Parse the address into street, city, postcode and country.", "task": "extraction", "complexity": "low", "split": "train"}
+{"prompt": "Extract the claim fields", "task": "extraction", "complexity": "low", "split": "train"}
+{"prompt": "From the lab report, extract each test name with its value and unit.", "task": "extraction", "complexity": "medium", "split": "train"}
+{"prompt": "Get the order id, sku and quantity out of this shipping notice.", "task": "extraction", "complexity": "low", "split": "train"}
+{"prompt": "Extract the invoice fields", "task": "extraction", "complexity": "low", "split": "train"}
+{"prompt": "Fill this JSON schema using the values found in the document.", "task": "extraction", "complexity": "medium", "split": "train"}
+{"prompt": "List the named people and organisations that appear in the article as JSON.", "task": "extraction", "complexity": "medium", "split": "train"}
+{"prompt": "Extract the policy number and the effective date from the letter.", "task": "extraction", "complexity": "low", "split": "train"}
+{"prompt": "Pull the phone numbers and email addresses out of the signature block.", "task": "extraction", "complexity": "low", "split": "train"}
+{"prompt": "Extract the fields", "task": "extraction", "complexity": "low", "split": "train"}
+{"prompt": "Read the receipt and output merchant, date, tax and total as key value pairs.", "task": "extraction", "complexity": "low", "split": "train"}
+{"prompt": "Extract all line items with description, unit price and quantity from the quote.", "task": "extraction", "complexity": "medium", "split": "train"}
+{"prompt": "Identify the medication names and dosages in the discharge summary and return JSON.", "task": "extraction", "complexity": "medium", "split": "train"}
+{"prompt": "Extract the json schema fields from the form text.", "task": "extraction", "complexity": "low", "split": "train"}
+{"prompt": "Extract parties, governing law, term and termination clauses from this agreement into a structured record, noting any clause that is missing.", "task": "extraction", "complexity": "high", "split": "train"}
+{"prompt": "Classify this ticket as billing, technical, or other.", "task": "classification", "complexity": "low", "split": "train"}
+{"prompt": "Classify this refund request", "task": "classification", "complexity": "low", "split": "train"}
+{"prompt": "Choose one label for this review: positive, negative or neutral.", "task": "classification", "complexity": "low", "split": "train"}
+{"prompt": "Which category does this email belong to: sales, support or spam?", "task": "classification", "complexity": "low", "split": "train"}
+{"prompt": "Label the sentiment of the following tweet.", "task": "classification", "complexity": "low", "split": "train"}
+{"prompt": "Classify this ticket", "task": "classification", "complexity": "low", "split": "train"}
+{"prompt": "Is this message spam or not spam? Answer with one word.", "task": "classification", "complexity": "low", "split": "train"}
+{"prompt": "Assign a priority label of low, medium or high to the incident.", "task": "classification", "complexity": "low", "split": "train"}
+{"prompt": "Tag this document with exactly one topic from the list.", "task": "classification", "complexity": "low", "split": "train"}
+{"prompt": "Decide whether the transaction is fraudulent or legitimate.", "task": "classification", "complexity": "medium", "split": "train"}
+{"prompt": "Categorise the support request into one of the queues below.", "task": "classification", "complexity": "low", "split": "train"}
+{"prompt": "Classify the intent of this utterance: book, cancel, or reschedule.", "task": "classification", "complexity": "low", "split": "train"}
+{"prompt": "classify this private matter", "task": "classification", "complexity": "low", "split": "train"}
+{"prompt": "Pick the single best category for this product listing.", "task": "classification", "complexity": "low", "split": "train"}
+{"prompt": "Label each sentence as claim, evidence or neither.", "task": "classification", "complexity": "medium", "split": "train"}
+{"prompt": "Choose one label for this item", "task": "classification", "complexity": "low", "split": "train"}
+{"prompt": "Is the tone of this message formal or informal?", "task": "classification", "complexity": "low", "split": "train"}
+{"prompt": "Route this request: classify it as hardware, software or account.", "task": "classification", "complexity": "low", "split": "train"}
+{"prompt": "Determine the language of the text and answer with its name only.", "task": "classification", "complexity": "low", "split": "train"}
+{"prompt": "Classify the severity of this bug report as critical, major or minor.", "task": "classification", "complexity": "low", "split": "train"}
+{"prompt": "Classify each of these forty clauses by risk category and flag any that fit more than one category with a short justification.", "task": "classification", "complexity": "high", "split": "train"}
+{"prompt": "Using the provided context, answer the question.", "task": "rag", "complexity": "medium", "split": "train"}
+{"prompt": "According to the documents, what is the refund window?", "task": "rag", "complexity": "medium", "split": "train"}
+{"prompt": "Answer only from the passages below and cite the passage you used.", "task": "rag", "complexity": "medium", "split": "train"}
+{"prompt": "Based on the retrieved context, when does the warranty expire?", "task": "rag", "complexity": "medium", "split": "train"}
+{"prompt": "Context: the handbook excerpt follows. Question: how many leave days do staff get?", "task": "rag", "complexity": "medium", "split": "train"}
+{"prompt": "Given the provided context, what did the committee decide?", "task": "rag", "complexity": "medium", "split": "train"}
+{"prompt": "Answer the user question using the knowledge base articles supplied.", "task": "rag", "complexity": "medium", "split": "train"}
+{"prompt": "According to the documents provided, who approves expenses over the limit?", "task": "rag", "complexity": "medium", "split": "train"}
+{"prompt": "Use the sources below to answer, and say you do not know if they do not cover it.", "task": "rag", "complexity": "medium", "split": "train"}
+{"prompt": "From the retrieved passages, what is the maximum file size allowed?", "task": "rag", "complexity": "low", "split": "train"}
+{"prompt": "With reference to the attached context, explain the escalation path.", "task": "rag", "complexity": "medium", "split": "train"}
+{"prompt": "Answer from the provided context only: which regions are supported?", "task": "rag", "complexity": "low", "split": "train"}
+{"prompt": "Here are search results. Use them to answer what the default timeout is.", "task": "rag", "complexity": "low", "split": "train"}
+{"prompt": "Grounded in the documents, what are the eligibility requirements?", "task": "rag", "complexity": "medium", "split": "train"}
+{"prompt": "Question answering over the provided context: what changed in version two?", "task": "rag", "complexity": "medium", "split": "train"}
+{"prompt": "Refer to the context and tell me the name of the data controller.", "task": "rag", "complexity": "low", "split": "train"}
+{"prompt": "According to the documents, which clause covers liability?", "task": "rag", "complexity": "medium", "split": "train"}
+{"prompt": "Use the retrieved chunks to answer and quote the supporting sentence.", "task": "rag", "complexity": "medium", "split": "train"}
+{"prompt": "Consult the provided context and state the shipping cost for Europe.", "task": "rag", "complexity": "low", "split": "train"}
+{"prompt": "Reconcile the three provided context documents, which disagree, and answer which policy is currently in force, citing each source.", "task": "rag", "complexity": "high", "split": "train"}
+{"prompt": "Summarize the quarterly report", "task": "summarization", "complexity": "medium", "split": "train"}
+{"prompt": "Summarize this report", "task": "summarization", "complexity": "medium", "split": "train"}
+{"prompt": "Give me a summary of the meeting notes.", "task": "summarization", "complexity": "medium", "split": "train"}
+{"prompt": "Write a short summary of the article in three sentences.", "task": "summarization", "complexity": "medium", "split": "train"}
+{"prompt": "Condense this email thread into the key points.", "task": "summarization", "complexity": "medium", "split": "train"}
+{"prompt": "Summarize the report", "task": "summarization", "complexity": "medium", "split": "train"}
+{"prompt": "Provide a brief overview of the document below.", "task": "summarization", "complexity": "medium", "split": "train"}
+{"prompt": "TL;DR of this long post please.", "task": "summarization", "complexity": "low", "split": "train"}
+{"prompt": "Summarise the customer call transcript for the account manager.", "task": "summarization", "complexity": "medium", "split": "train"}
+{"prompt": "Shorten this text to one paragraph while keeping the main points.", "task": "summarization", "complexity": "medium", "split": "train"}
+{"prompt": "Produce an executive summary of the incident review.", "task": "summarization", "complexity": "medium", "split": "train"}
+{"prompt": "Summarize the patient intake notes", "task": "summarization", "complexity": "medium", "split": "train"}
+{"prompt": "Give the main takeaways from this research abstract.", "task": "summarization", "complexity": "medium", "split": "train"}
+{"prompt": "Boil the changelog down to a two line summary.", "task": "summarization", "complexity": "low", "split": "train"}
+{"prompt": "Summarize the ticket backlog", "task": "summarization", "complexity": "medium", "split": "train"}
+{"prompt": "Write a headline and a one sentence summary for this story.", "task": "summarization", "complexity": "low", "split": "train"}
+{"prompt": "Recap what was agreed in the discussion above.", "task": "summarization", "complexity": "medium", "split": "train"}
+{"prompt": "Summarise the chapter in bullet points.", "task": "summarization", "complexity": "medium", "split": "train"}
+{"prompt": "Brief summary of the release notes for a non technical reader.", "task": "summarization", "complexity": "medium", "split": "train"}
+{"prompt": "Summarize these twelve board papers into a single briefing that keeps every decision, owner and deadline and notes where papers conflict.", "task": "summarization", "complexity": "high", "split": "train"}
+{"prompt": "Analyze deeply", "task": "reasoning", "complexity": "high", "split": "train"}
+{"prompt": "Reason step by step about this proof", "task": "reasoning", "complexity": "high", "split": "train"}
+{"prompt": "Prove that the sum of two even numbers is even.", "task": "reasoning", "complexity": "high", "split": "train"}
+{"prompt": "Work through this logic puzzle and explain each step.", "task": "reasoning", "complexity": "high", "split": "train"}
+{"prompt": "Reason step by step to find which schedule satisfies all constraints.", "task": "reasoning", "complexity": "high", "split": "train"}
+{"prompt": "Analyze deeply why the system deadlocks under this interleaving.", "task": "reasoning", "complexity": "high", "split": "train"}
+{"prompt": "Derive the time complexity of this algorithm and justify it.", "task": "reasoning", "complexity": "high", "split": "train"}
+{"prompt": "Think through the trade-offs and decide which design is correct.", "task": "reasoning", "complexity": "high", "split": "train"}
+{"prompt": "Solve this word problem, showing your reasoning.", "task": "reasoning", "complexity": "medium", "split": "train"}
+{"prompt": "Given these premises, what follows logically? Explain why.", "task": "reasoning", "complexity": "high", "split": "train"}
+{"prompt": "Prove or disprove the following claim about prime numbers.", "task": "reasoning", "complexity": "high", "split": "train"}
+{"prompt": "Plan the migration in ordered steps and reason about the risks of each.", "task": "reasoning", "complexity": "high", "split": "train"}
+{"prompt": "Determine the root cause from these symptoms by elimination.", "task": "reasoning", "complexity": "high", "split": "train"}
+{"prompt": "Reason about whether this invariant holds after every iteration.", "task": "reasoning", "complexity": "high", "split": "train"}
+{"prompt": "Compute the probability and explain the reasoning behind each step.", "task": "reasoning", "complexity": "high", "split": "train"}
+{"prompt": "Which of the two hypotheses better explains the data, and why?", "task": "reasoning", "complexity": "high", "split": "train"}
+{"prompt": "Analyze deeply the second order effects of this pricing change.", "task": "reasoning", "complexity": "high", "split": "train"}
+{"prompt": "Deduce the missing value in the sequence and justify the rule.", "task": "reasoning", "complexity": "medium", "split": "train"}
+{"prompt": "Carefully reason through the edge cases of this state machine.", "task": "reasoning", "complexity": "high", "split": "train"}
+{"prompt": "Step by step, work out how many moves the puzzle needs.", "task": "reasoning", "complexity": "medium", "split": "train"}
+{"prompt": "Critique this architecture", "task": "critique", "complexity": "high", "split": "train"}
+{"prompt": "Find flaws in this argument.", "task": "critique", "complexity": "high", "split": "train"}
+{"prompt": "Review this design document and point out its weaknesses.", "task": "critique", "complexity": "high", "split": "train"}
+{"prompt": "Critique the essay and suggest how to improve it.", "task": "critique", "complexity": "medium", "split": "train"}
+{"prompt": "What is wrong with this plan? Be critical.", "task": "critique", "complexity": "high", "split": "train"}
+{"prompt": "Find flaws in the proposed database schema.", "task": "critique", "complexity": "high", "split": "train"}
+{"prompt": "Give a critical review of this pull request description.", "task": "critique", "complexity": "medium", "split": "train"}
+{"prompt": "Critique this business case and list the risks it ignores.", "task": "critique", "complexity": "high", "split": "train"}
+{"prompt": "Evaluate the strengths and weaknesses of this proposal.", "task": "critique", "complexity": "high", "split": "train"}
+{"prompt": "Identify the logical fallacies in the following paragraph.", "task": "critique", "complexity": "high", "split": "train"}
+{"prompt": "Play devil's advocate against this strategy.", "task": "critique", "complexity": "high", "split": "train"}
+{"prompt": "Critique my cover letter honestly.", "task": "critique", "complexity": "medium", "split": "train"}
+{"prompt": "Review the code below and point out bugs and bad practices.", "task": "critique", "complexity": "high", "split": "train"}
+{"prompt": "Find the weaknesses in this security model.", "task": "critique", "complexity": "high", "split": "train"}
+{"prompt": "Assess this experiment design and say what would invalidate its results.", "task": "critique", "complexity": "high", "split": "train"}
+{"prompt": "Give harsh but fair feedback on this pitch.", "task": "critique", "complexity": "medium", "split": "train"}
+{"prompt": "Critique the methodology of this study.", "task": "critique", "complexity": "high", "split": "train"}
+{"prompt": "Point out the flaws and gaps in this test plan.", "task": "critique", "complexity": "high", "split": "train"}
+{"prompt": "Red team this policy and find how it could be abused.", "task": "critique", "complexity": "high", "split": "train"}
+{"prompt": "Peer review this abstract and list its shortcomings.", "task": "critique", "complexity": "medium", "split": "train"}
+{"prompt": "Hello there", "task": "general", "complexity": "low", "split": "train"}
+{"prompt": "hello", "task": "general", "complexity": "low", "split": "train"}
+{"prompt": "hello again", "task": "general", "complexity": "low", "split": "train"}
+{"prompt": "Hi, how are you today?", "task": "general", "complexity": "low", "split": "train"}
+{"prompt": "Write a short poem about autumn.", "task": "general", "complexity": "medium", "split": "train"}
+{"prompt": "What is the capital of France?", "task": "general", "complexity": "low", "split": "train"}
+{"prompt": "Tell me a joke.", "task": "general", "complexity": "low", "split": "train"}
+{"prompt": "Draft a polite email asking to move our meeting.", "task": "general", "complexity": "medium", "split": "train"}
+{"prompt": "Translate good morning into Spanish.", "task": "general", "complexity": "low", "split": "train"}
+{"prompt": "Thanks, that was helpful.", "task": "general", "complexity": "low", "split": "train"}
+{"prompt": "Can you help me with something?", "task": "general", "complexity": "low", "split": "train"}
+{"prompt": "Write a function that reverses a string in Python.", "task": "general", "complexity": "medium", "split": "train"}
+{"prompt": "Give me three ideas for a team offsite.", "task": "general", "complexity": "medium", "split": "train"}
+{"prompt": "What does HTTP stand for?", "task": "general", "complexity": "low", "split": "train"}
+{"prompt": "Rewrite this sentence to sound friendlier.", "task": "general", "complexity": "low", "split": "train"}
+{"prompt": "Explain what a hash table is.", "task": "general", "complexity": "medium", "split": "train"}
+{"prompt": "Suggest a name for my bakery.", "task": "general", "complexity": "low", "split": "train"}
+{"prompt": "shared state probe", "task": "general", "complexity": "low", "split": "train"}
+{"prompt": "Good morning", "task": "general", "complexity": "low", "split": "train"}
+{"prompt": "How do I boil an egg?", "task": "general", "complexity": "low", "split": "train"}
+{"prompt": "Write a product description for a steel water bottle.", "task": "general", "complexity": "medium", "split": "train"}
+{"prompt": "Extract the invoice date and the supplier name.", "task": "extraction", "complexity": "low", "split": "calibration"}
+{"prompt": "Return the contract value and currency as JSON.", "task": "extraction", "complexity": "low", "split": "calibration"}
+{"prompt": "Pull out the tracking number from this message.", "task": "extraction", "complexity": "low", "split": "calibration"}
+{"prompt": "Extract every figure with its label from the financial table.", "task": "extraction", "complexity": "medium", "split": "calibration"}
+{"prompt": "Parse the name and date of birth from the form.", "task": "extraction", "complexity": "low", "split": "calibration"}
+{"prompt": "Extract the customer id", "task": "extraction", "complexity": "low", "split": "calibration"}
+{"prompt": "Classify this refund request please", "task": "classification", "complexity": "low", "split": "calibration"}
+{"prompt": "Which label fits this complaint best?", "task": "classification", "complexity": "low", "split": "calibration"}
+{"prompt": "Is this review positive or negative?", "task": "classification", "complexity": "low", "split": "calibration"}
+{"prompt": "Categorise the email as urgent or not urgent.", "task": "classification", "complexity": "low", "split": "calibration"}
+{"prompt": "Classify this document by department.", "task": "classification", "complexity": "low", "split": "calibration"}
+{"prompt": "Choose one label for the feedback below.", "task": "classification", "complexity": "low", "split": "calibration"}
+{"prompt": "According to the documents, what is the notice period?", "task": "rag", "complexity": "medium", "split": "calibration"}
+{"prompt": "Using the provided context, list the supported currencies.", "task": "rag", "complexity": "low", "split": "calibration"}
+{"prompt": "Answer from the passages below: who is the account owner?", "task": "rag", "complexity": "low", "split": "calibration"}
+{"prompt": "Based on the provided context, is overtime paid?", "task": "rag", "complexity": "medium", "split": "calibration"}
+{"prompt": "Use the retrieved documents to answer the customer.", "task": "rag", "complexity": "medium", "split": "calibration"}
+{"prompt": "From the context supplied, what is the return address?", "task": "rag", "complexity": "low", "split": "calibration"}
+{"prompt": "Summarize the incident report", "task": "summarization", "complexity": "medium", "split": "calibration"}
+{"prompt": "Give a short summary of this contract.", "task": "summarization", "complexity": "medium", "split": "calibration"}
+{"prompt": "Summarise the feedback in two sentences.", "task": "summarization", "complexity": "medium", "split": "calibration"}
+{"prompt": "Condense these notes into key points.", "task": "summarization", "complexity": "medium", "split": "calibration"}
+{"prompt": "Write a brief summary of the proposal.", "task": "summarization", "complexity": "medium", "split": "calibration"}
+{"prompt": "TL;DR this thread.", "task": "summarization", "complexity": "low", "split": "calibration"}
+{"prompt": "Reason step by step about which option is cheaper overall.", "task": "reasoning", "complexity": "high", "split": "calibration"}
+{"prompt": "Prove that this recursive function terminates.", "task": "reasoning", "complexity": "high", "split": "calibration"}
+{"prompt": "Analyze deeply the cause of the regression.", "task": "reasoning", "complexity": "high", "split": "calibration"}
+{"prompt": "Work out the answer and explain each step of your reasoning.", "task": "reasoning", "complexity": "medium", "split": "calibration"}
+{"prompt": "Deduce who owns the fish from these clues.", "task": "reasoning", "complexity": "high", "split": "calibration"}
+{"prompt": "Reason through the constraints and find a valid assignment.", "task": "reasoning", "complexity": "high", "split": "calibration"}
+{"prompt": "Critique this API design.", "task": "critique", "complexity": "high", "split": "calibration"}
+{"prompt": "Find flaws in my reasoning above.", "task": "critique", "complexity": "high", "split": "calibration"}
+{"prompt": "Review this plan and list its weaknesses.", "task": "critique", "complexity": "high", "split": "calibration"}
+{"prompt": "Give critical feedback on this draft.", "task": "critique", "complexity": "medium", "split": "calibration"}
+{"prompt": "What are the shortcomings of this approach?", "task": "critique", "complexity": "high", "split": "calibration"}
+{"prompt": "Point out the flaws in this contract clause.", "task": "critique", "complexity": "high", "split": "calibration"}
+{"prompt": "Hey", "task": "general", "complexity": "low", "split": "calibration"}
+{"prompt": "What time zone is Tokyo in?", "task": "general", "complexity": "low", "split": "calibration"}
+{"prompt": "Write a limerick about a cat.", "task": "general", "complexity": "medium", "split": "calibration"}
+{"prompt": "Help me word a thank you note.", "task": "general", "complexity": "medium", "split": "calibration"}
+{"prompt": "What is two plus two?", "task": "general", "complexity": "low", "split": "calibration"}
+{"prompt": "Recommend a book about history.", "task": "general", "complexity": "low", "split": "calibration"}

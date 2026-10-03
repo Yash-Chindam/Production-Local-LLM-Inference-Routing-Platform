@@ -60,6 +60,13 @@ class ModelProfile(BaseModel):
     quality: float = Field(ge=0.0, le=1.0)
     estimated_queue_ms: int = Field(default=0, ge=0)
     cost_weight: float = Field(default=0.0, ge=0.0)
+    # Measured quality per task from benchmark history; the single
+    # `quality` figure is only the fallback for a task never measured.
+    quality_by_task: dict[TaskClass, float] = Field(default_factory=dict)
+    supports_structured_output: bool = True
+
+    def quality_for(self, task: TaskClass) -> float:
+        return self.quality_by_task.get(task, self.quality)
 
 
 class RouteDecision(BaseModel):
@@ -70,6 +77,11 @@ class RouteDecision(BaseModel):
     candidate_count: int
     adapter_id: str | None = None
     adapter_revision: str | None = None
+    # How the task was established: declared by the caller, predicted by
+    # the classifier, or defaulted to general when the classifier abstained.
+    task_source: str = "declared"
+    task_confidence: float | None = None
+    complexity: str | None = None
 
 
 class ChatCompletionChoice(BaseModel):

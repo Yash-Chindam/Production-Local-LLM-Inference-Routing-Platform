@@ -142,3 +142,52 @@ def test_metrics_endpoint_counts_policy_rejections() -> None:
         metrics = client.get("/metrics").text
 
     assert 'router_rejections_total{type="no_eligible_model"} 1.0' in metrics
+
+
+def test_response_attributes_how_the_task_was_established() -> None:
+    with build_client() as client:
+        predicted = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer integration-key"},
+            json={
+                "model": "auto",
+                "messages": [{"role": "user", "content": "Which label fits this complaint?"}],
+            },
+        ).json()["routing"]
+        declared = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer integration-key"},
+            json={
+                "model": "auto",
+                "messages": [{"role": "user", "content": "Which label fits this complaint?"}],
+                "routing": {"task": "summarization", "privacy": "restricted"},
+            },
+        ).json()["routing"]
+
+    assert predicted["task"] == "classification"
+    assert predicted["task_source"] == "classifier"
+    assert predicted["task_confidence"] >= 0.5
+    assert predicted["complexity"] == "low"
+    assert declared["task"] == "summarization"
+    assert declared["task_source"] == "declared"
+    assert declared["task_confidence"] is None
+
+
+def test_observed_queue_delay_feeds_back_into_the_gateway_router() -> None:
+    with build_client() as client:
+        for _ in range(2):
+            response = client.post(
+                "/v1/chat/completions",
+                headers={"Authorization": "Bearer integration-key"},
+                json={
+                    "model": "auto",
+                    "messages": [{"role": "user", "content": "Classify this ticket"}],
+                    "routing": {"privacy": "restricted"},
+                },
+            )
+            assert response.status_code == 200
+
+    # The mock engine admits instantly, so the observed delay stays near zero
+    # and the specialist keeps winning; the point is that routing still works
+    # once the estimate has been replaced by an observation.
+    assert response.json()["model"] == "small-specialist"
