@@ -1,5 +1,6 @@
 import pytest
 
+from llm_router.engine_stats import EngineStats
 from llm_router.models import ModelProfile, RouteDecision, TaskClass
 from llm_router.observability import Metrics
 
@@ -179,3 +180,124 @@ def test_render_returns_prometheus_exposition_payload() -> None:
 
     assert b"router_rejections_total" in payload
     assert content_type.startswith("text/plain")
+
+
+def test_engine_stats_publish_kv_cache_batch_and_gpu_state() -> None:
+    metrics = Metrics()
+    stats = EngineStats(
+        running_requests=12.0,
+        waiting_requests=3.0,
+        kv_cache_usage_ratio=0.73,
+        preemptions_total=4.0,
+        gpu_utilization_ratio={"0": 0.87},
+        gpu_memory_used_bytes={"0": 2048.0},
+        gpu_memory_total_bytes={"0": 4096.0},
+    )
+
+    metrics.record_engine_stats(stats, engine="vllm")
+
+    assert sample_value(metrics, "router_engine_running_requests", {"engine": "vllm"}) == 12
+    assert sample_value(metrics, "router_engine_waiting_requests", {"engine": "vllm"}) == 3
+    assert sample_value(
+        metrics, "router_engine_kv_cache_occupancy_ratio", {"engine": "vllm"}
+    ) == pytest.approx(0.73)
+    assert sample_value(metrics, "router_engine_preemptions_total", {"engine": "vllm"}) == 4
+    assert sample_value(metrics, "router_gpu_utilization_ratio", {"gpu": "0"}) == pytest.approx(
+        0.87
+    )
+    assert sample_value(metrics, "router_gpu_memory_used_bytes", {"gpu": "0"}) == 2048
+    assert sample_value(metrics, "router_gpu_memory_total_bytes", {"gpu": "0"}) == 4096
+
+
+def test_batch_size_average_is_recoverable_from_the_histogram() -> None:
+    metrics = Metrics()
+
+    metrics.record_engine_stats(EngineStats(running_requests=4.0), engine="vllm")
+    metrics.record_engine_stats(EngineStats(running_requests=8.0), engine="vllm")
+
+    total = sample_value(metrics, "router_engine_batch_size_sum", {"engine": "vllm"})
+    count = sample_value(metrics, "router_engine_batch_size_count", {"engine": "vllm"})
+    assert total / count == pytest.approx(6.0)
+
+
+def test_absent_engine_samples_publish_no_series() -> None:
+    metrics = Metrics()
+
+    metrics.record_engine_stats(EngineStats(running_requests=2.0), engine="vllm")
+
+    assert (
+        metrics.registry.get_sample_value(
+            "router_engine_kv_cache_occupancy_ratio", {"engine": "vllm"}
+        )
+        is None
+    )
+    assert metrics.registry.get_sample_value("router_gpu_utilization_ratio", {"gpu": "0"}) is None
+
+
+def test_structured_validity_is_recorded_as_observed_quality() -> None:
+    metrics = Metrics()
+    decision = build_decision()
+
+    metrics.record_structured_output(decision, valid=True)
+
+    assert (
+        sample_value(
+            metrics,
+            "router_structured_output_total",
+            {"model": "general-local", "result": "valid"},
+        )
+        == 1
+    )
+    assert (
+        sample_value(
+            metrics,
+            "router_observed_quality_sum",
+            {"model": "general-local", "signal": "structured_validity"},
+        )
+        == 1.0
+    )
+    # The model predicted 0.89 and the response parsed, so the error is 0.11.
+    assert sample_value(
+        metrics,
+        "router_quality_prediction_error_sum",
+        {"model": "general-local", "signal": "structured_validity"},
+    ) == pytest.approx(0.11)
+
+
+def test_invalid_structured_output_is_observed_quality_zero() -> None:
+    metrics = Metrics()
+    decision = build_decision()
+
+    metrics.record_structured_output(decision, valid=False)
+
+    assert (
+        sample_value(
+            metrics,
+            "router_structured_output_total",
+            {"model": "general-local", "result": "invalid"},
+        )
+        == 1
+    )
+    assert (
+        sample_value(
+            metrics,
+            "router_observed_quality_sum",
+            {"model": "general-local", "signal": "structured_validity"},
+        )
+        == 0.0
+    )
+    assert sample_value(
+        metrics,
+        "router_quality_prediction_error_sum",
+        {"model": "general-local", "signal": "structured_validity"},
+    ) == pytest.approx(0.89)
+
+
+def test_model_load_duration_is_observed() -> None:
+    metrics = Metrics()
+
+    metrics.record_model_load("vllm", 31.5)
+
+    assert sample_value(
+        metrics, "router_model_load_seconds_sum", {"model": "vllm"}
+    ) == pytest.approx(31.5)

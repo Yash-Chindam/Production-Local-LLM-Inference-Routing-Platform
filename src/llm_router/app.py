@@ -37,6 +37,8 @@ from llm_router.caching import (
     semantic_cache_eligible,
 )
 from llm_router.config import Settings, get_settings
+from llm_router.engine_stats import ColdStartTracker, EngineStatsCollector
+from llm_router.evaluation import structured_output_valid
 from llm_router.models import (
     ChatCompletionChoice,
     ChatCompletionRequest,
@@ -78,6 +80,7 @@ def create_app(
     cache_store: CacheStore | None = None,
     registry: Registry | None = None,
     redis_client: RedisLike | None = None,
+    engine_stats: EngineStatsCollector | None = None,
 ) -> FastAPI:
     runtime_settings = settings or get_settings()
     catalog = registry if registry is not None else _load_catalog(runtime_settings.registry_path)
@@ -114,6 +117,15 @@ def create_app(
         else MockInferenceBackend()
     )
     telemetry = metrics if metrics is not None else Metrics()
+    engine_telemetry = engine_stats or (
+        EngineStatsCollector(base_url=runtime_settings.vllm_base_url, client=engine_client)
+        if engine_client is not None
+        else None
+    )
+    cold_start = ColdStartTracker()
+    # One gateway deployment faces one engine target, so engine-level telemetry
+    # and cold starts are attributed to that target rather than to a model.
+    engine_label = runtime_settings.backend
     exact_cache: CacheStore = (
         cache_store
         or (
@@ -210,12 +222,25 @@ def create_app(
     async def readiness(request: Request) -> dict[str, str]:
         if not getattr(request.app.state, "ready", False):
             raise HTTPException(status_code=503, detail="not ready")
-        if not await inference_backend.healthy():
+        healthy = await inference_backend.healthy()
+        # The probe is the one place that sees the engine go from loading to
+        # serving, so cold start is measured here instead of being configured.
+        loaded_seconds = cold_start.observe(healthy=healthy, now=time.perf_counter())
+        if loaded_seconds is not None:
+            telemetry.record_model_load(engine_label, loaded_seconds)
+        if not healthy:
             raise HTTPException(status_code=503, detail="inference backend is unhealthy")
         return {"status": "ready"}
 
     @app.get("/metrics")
     async def prometheus_metrics() -> Response:
+        # Engine and accelerator state is pulled through on scrape so the
+        # gateway stays the single scrape target for the whole serving path and
+        # no background poller runs when nobody is collecting.
+        if engine_telemetry is not None:
+            stats = await engine_telemetry.sample()
+            if stats is not None:
+                telemetry.record_engine_stats(stats, engine=engine_label)
         payload, content_type = telemetry.render()
         return Response(content=payload, media_type=content_type)
 
@@ -437,6 +462,8 @@ def create_app(
         text = "".join(collected)
         prompt_tokens = max(1, len(prompt) // 4)
         completion_tokens = max(1, len(text) // 4)
+        if payload.routing.structured:
+            telemetry.record_structured_output(decision, valid=structured_output_valid(text))
         telemetry.record_completion(
             decision,
             latency_seconds=time.perf_counter() - started,
@@ -529,6 +556,8 @@ def create_app(
             telemetry.queued_requests.dec()
             raise
 
+        if payload.routing.structured:
+            telemetry.record_structured_output(decision, valid=structured_output_valid(result.text))
         telemetry.record_completion(
             decision,
             latency_seconds=time.perf_counter() - started,
