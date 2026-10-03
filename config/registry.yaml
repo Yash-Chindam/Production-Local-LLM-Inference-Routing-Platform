@@ -179,3 +179,33 @@ deployments:
     model_checksums:
       small-specialist: sha256:mock-small-previous
     stage: deprecated
+
+# Per-tenant entitlement (sections 7.1 and 14). Entitlements are governance and
+# belong here; the credentials that bind a caller to a tenant are supplied by
+# ROUTER_TENANT_KEYS from the secret manager and are never committed.
+tenants:
+  - id: default
+    description: Platform default for callers with no dedicated entitlement.
+
+  - id: support-tooling
+    description: Ticket triage and field extraction only; no reasoning tier.
+    permitted_tiers: [small-specialist, general-local]
+    quota_requests_per_minute: 240
+    minimum_privacy: private
+
+  - id: clinical-research
+    description: Regulated data; never leaves the private inference environment.
+    permitted_tiers: [small-specialist, general-local, high-capability]
+    quota_requests_per_minute: 60
+    # Raised to restricted no matter what the caller declares, so this tenant
+    # can never become eligible for external routing or semantic reuse.
+    minimum_privacy: restricted
+    quality_floor: 0.85
+    # Stated explicitly rather than relying on the restricted floor alone.
+    allow_external_fallback: false
+
+  - id: public-demo
+    description: Public demo traffic; may use the approved external fallback.
+    permitted_models: [small-specialist]
+    quota_requests_per_minute: 30
+    allow_external_fallback: true

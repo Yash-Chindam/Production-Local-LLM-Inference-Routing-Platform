@@ -36,13 +36,18 @@ class SlidingWindowQuota:
         self._events: dict[str, deque[float]] = defaultdict(deque)
         self._lock = asyncio.Lock()
 
-    async def consume(self, subject: str, *, now: float | None = None) -> None:
+    async def consume(
+        self, subject: str, *, now: float | None = None, limit: int | None = None
+    ) -> None:
+        """Consume one request, against the subject's own limit when it has one."""
+
         timestamp = time.monotonic() if now is None else now
         cutoff = timestamp - 60
+        effective_limit = self._limit if limit is None else limit
         async with self._lock:
             events = self._events[subject]
             while events and events[0] <= cutoff:
                 events.popleft()
-            if len(events) >= self._limit:
+            if len(events) >= effective_limit:
                 raise QuotaExceededError("request quota exceeded")
             events.append(timestamp)

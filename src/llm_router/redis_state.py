@@ -64,11 +64,11 @@ class RedisFixedWindowQuota:
         self._limit = requests_per_minute
         self._prefix = prefix
 
-    async def consume(self, subject: str, *, window: int) -> bool:
+    async def consume(self, subject: str, *, window: int, limit: int | None = None) -> bool:
         """Return whether the request fits inside the caller's quota."""
 
         key = f"{self._prefix}{subject}:{window}"
         count = await self._client.incr(key)
         if count == 1:
             await self._client.expire(key, QUOTA_WINDOW_SECONDS * 2)
-        return count <= self._limit
+        return count <= (self._limit if limit is None else limit)
