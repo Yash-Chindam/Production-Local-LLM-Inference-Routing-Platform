@@ -27,6 +27,11 @@ class Settings(BaseSettings):
     registry_path: str = "config/registry.yaml"
     routing_policy_version: str = "v1"
     redis_url: str = ""
+    # Traces are exported only when a collector endpoint is set. Prompt content
+    # is never recorded unless an operator opts in, and then only for public
+    # requests; restricted and private prompts stay out of traces regardless.
+    otlp_endpoint: str = ""
+    trace_prompt_content: bool = False
     cache_enabled: bool = True
     cache_ttl_seconds: float = Field(default=300.0, gt=0)
     cache_max_entries: int = Field(default=1024, ge=1)
