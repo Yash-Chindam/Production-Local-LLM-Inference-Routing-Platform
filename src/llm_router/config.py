@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     backend_timeout_seconds: float = Field(default=60.0, gt=0)
     registry_path: str = "config/registry.yaml"
     routing_policy_version: str = "v1"
+    # Labelled prompts the task and complexity classifier is trained on at
+    # start-up; keyword rules decide the task when the file is absent.
+    task_classifier_path: str = "config/routing/task-classifier-v1.jsonl"
     redis_url: str = ""
     # Traces are exported only when a collector endpoint is set. Prompt content
     # is never recorded unless an operator opts in, and then only for public

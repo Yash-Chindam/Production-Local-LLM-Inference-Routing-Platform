@@ -76,6 +76,7 @@ class ModelCard(BaseModel):
     cost_weight: float = Field(default=0.0, ge=0.0)
     stage: LifecycleStage = LifecycleStage.DEVELOPMENT
     healthy: bool = True
+    supports_structured_output: bool = True
     intended_tasks: str
     limitations: str
     evaluation_references: tuple[str, ...] = ()
@@ -86,8 +87,10 @@ class ModelCard(BaseModel):
             raise ValueError(f"model {self.id} cannot reach production without evaluation evidence")
         return self
 
-    def to_profile(self) -> ModelProfile:
+    def to_profile(self, quality_by_task: dict[TaskClass, float] | None = None) -> ModelProfile:
         return ModelProfile(
+            quality_by_task=quality_by_task or {},
+            supports_structured_output=self.supports_structured_output,
             id=self.id,
             revision=self.revision,
             local=self.local,
@@ -138,6 +141,9 @@ class BenchmarkRun(BaseModel):
     engine_revision: str
     model_revision: str
     adapter_revision: str | None = None
+    # The task the dataset measures, so quality history can be kept per
+    # task and model rather than as one figure per model.
+    task: TaskClass | None = None
     concurrency: int = Field(ge=1)
     prompt_tokens_p50: int = Field(ge=1)
     prompt_tokens_p95: int = Field(ge=1)
@@ -274,7 +280,26 @@ class Registry(BaseModel):
         )
 
     def profiles(self) -> tuple[ModelProfile, ...]:
-        return tuple(card.to_profile() for card in self.servable_models())
+        return tuple(
+            card.to_profile(self.quality_history(card.revision)) for card in self.servable_models()
+        )
+
+    def quality_history(self, model_revision: str) -> dict[TaskClass, float]:
+        """Mean benchmarked quality per task for one base-model revision.
+
+        Adapter runs are excluded: they measure the adapter, and are already
+        accounted for through the adapter's own quality delta.
+        """
+
+        scores: dict[TaskClass, list[float]] = {}
+        for run in self.benchmarks:
+            if (
+                run.model_revision == model_revision
+                and run.adapter_revision is None
+                and run.task is not None
+            ):
+                scores.setdefault(run.task, []).append(run.quality_score)
+        return {task: sum(values) / len(values) for task, values in scores.items()}
 
     def model_card(self, model_id: str) -> ModelCard:
         for card in self.models:

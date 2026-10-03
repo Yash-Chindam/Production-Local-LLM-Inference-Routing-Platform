@@ -39,9 +39,11 @@ from llm_router.caching import (
     exact_cache_eligible,
     semantic_cache_eligible,
 )
+from llm_router.classifier import TaskClassifier, load_classifier
 from llm_router.config import Settings, get_settings
 from llm_router.engine_stats import ColdStartTracker, EngineStatsCollector
 from llm_router.evaluation import structured_output_valid
+from llm_router.load import LoadTracker
 from llm_router.models import (
     ChatCompletionChoice,
     ChatCompletionRequest,
@@ -95,6 +97,14 @@ def _load_catalog(path: str) -> Registry | None:
     return load_registry(path)
 
 
+def _load_task_classifier(path: str) -> TaskClassifier | None:
+    """Train the routing classifier, or fall back to keyword rules when absent."""
+
+    if not Path(path).exists():
+        return None
+    return load_classifier(path)
+
+
 def create_app(
     settings: Settings | None = None,
     *,
@@ -112,10 +122,13 @@ def create_app(
     policy_version = (
         catalog.policy.version if catalog is not None else runtime_settings.routing_policy_version
     )
+    load = LoadTracker()
     router = Router(
         profiles=profiles,
         external_fallback_enabled=runtime_settings.external_fallback_enabled,
         registry=catalog,
+        classifier=_load_task_classifier(runtime_settings.task_classifier_path),
+        load=load,
     )
     admission = AdmissionController(
         runtime_settings.max_concurrency,
@@ -278,6 +291,7 @@ def create_app(
             stats = await engine_telemetry.sample()
             if stats is not None:
                 telemetry.record_engine_stats(stats, engine=engine_label)
+                load.observe_engine(stats)
         payload, content_type = telemetry.render()
         return Response(content=payload, media_type=content_type)
 
@@ -647,6 +661,9 @@ def create_app(
             async with admission.slot():
                 telemetry.queued_requests.dec()
                 queue_seconds = time.perf_counter() - started
+                # What this request actually waited becomes the next
+                # request's estimate for the same model.
+                load.observe_queue(decision.profile.id, queue_seconds * 1000)
                 telemetry.inflight_requests.inc()
                 try:
                     if payload.stream:
@@ -713,6 +730,9 @@ def create_app(
                 "adapter_id": decision.adapter_id,
                 "adapter_revision": decision.adapter_revision,
                 "task": decision.task.value,
+                "task_source": decision.task_source,
+                "task_confidence": decision.task_confidence,
+                "complexity": decision.complexity,
                 "reason": decision.reason,
                 "score": decision.score,
                 "candidate_count": decision.candidate_count,

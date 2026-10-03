@@ -73,6 +73,44 @@ workflow tags `main` (`vMAJOR.MINOR.PATCH`) and publishes a GitHub Release with
 auto-generated notes. Tags are never created by hand, and nothing is ever tagged off a
 branch other than `main`.
 
+## Routing
+
+Privacy, tenant entitlement, context size, and capability are hard filters: deterministic, and
+applied before any score is computed. Among the models that remain, the router scores measured
+quality for the task against observed queue delay, cost, engine saturation, and how complex the
+request is predicted to be.
+
+**Task and complexity** come from a calibrated classifier — multinomial naive Bayes over word
+unigrams and bigrams, trained at start-up from
+[`config/routing/task-classifier-v1.jsonl`](config/routing/task-classifier-v1.jsonl). It needs no
+accelerator and no extra dependency, so a routing decision never waits on the models it is
+choosing between. Its posteriors are temperature-scaled against a held-out split, so a confidence
+reads as a probability, and a prediction under 0.5 abstains to the `general` task rather than
+being trusted. A task the caller declares in `routing.task` is never overridden. Without the
+dataset the router falls back to keyword rules.
+
+On the held-out prompts in
+[`benchmarks/datasets/routing-tasks-v1.jsonl`](benchmarks/datasets/routing-tasks-v1.jsonl) the
+classifier gets every task right, 88% of complexity labels, and an expected calibration error of
+0.035. Both datasets are small and were written by hand in one voice, so treat that as a floor
+check on the mechanism, not as evidence of accuracy on real traffic: replace them with labelled
+production prompts before relying on the numbers.
+
+| Routing feature | Source |
+|---|---|
+| Task and complexity | The classifier; `low` leaves work on the cheapest capable model, `high` outweighs the specialization and cost terms. |
+| Structured-output requirement | `routing.structured` excludes any model whose card sets `supports_structured_output: false`. |
+| Quality by task and model | Mean benchmarked quality for the task from the catalog; the card's headline `quality` only for a task never measured. |
+| Current queue delay | An exponentially weighted average of what requests for that model actually waited, replacing the catalog estimate after the first observation. |
+| GPU capacity | Engine saturation — the worse of KV-cache occupancy and the share of admitted work not yet started — from the last metrics scrape, discarded after 30 seconds. |
+
+One gateway faces one engine, so saturation costs every local model equally: it can tip an
+eligible request to the approved external model, and it never reorders local models or overrides
+privacy. Required modality is not a routing feature yet; message content is text only.
+
+Every response reports `task_source` (`declared`, `classifier`, `abstained`, `keyword`, or
+`cached`), `task_confidence`, and `complexity` beside the route reason.
+
 ## Serving backends
 
 `ROUTER_BACKEND=mock` (the default) keeps CI deterministic and GPU-free.
