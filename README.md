@@ -227,6 +227,30 @@ go from loading to serving, so the duration of that window is observed there. Th
 reopens on every later recovery, so a reload after an out-of-memory eviction or a lost node is
 measured too — not only the first start.
 
+### Tracing
+
+Every chat completion is one OpenTelemetry span carrying what is needed to explain the route:
+tenant, effective and declared privacy class, task, model and revision, adapter, cache result,
+score, candidate count, the route reason, and token usage. The response quotes it as
+`X-Trace-Id`. Only the OpenTelemetry API is a runtime dependency, so tracing is a no-op until a
+collector is configured:
+
+```bash
+python -m pip install -e ".[tracing]"
+ROUTER_OTLP_ENDPOINT=http://otel-collector:4318/v1/traces
+```
+
+Prompts are redacted by privacy class, evaluated after any tenant floor has been applied:
+
+| Class | Recorded |
+|---|---|
+| `restricted` | Length only. No digest: a digest of a short or templated prompt can be reversed by guessing. |
+| `private` | Length and a SHA-256 digest, so repeats can be correlated. |
+| `public` | Length and digest; a bounded prefix of the content only with `ROUTER_TRACE_PROMPT_CONTENT=true`. |
+
+Completions are never recorded. A failed request records its error type and not its message,
+because an engine error can echo the request it rejected.
+
 ## Caching
 
 Cache keys bind the tenant, the active model-catalog fingerprint, and the generation
@@ -278,6 +302,9 @@ All settings use the `ROUTER_` prefix.
 | `ROUTER_QUOTA_REQUESTS_PER_MINUTE` | `120` | Per-token sliding-window quota. |
 | `ROUTER_EXTERNAL_FALLBACK_ENABLED` | `false` | Operator gate for external fallback. |
 | `ROUTER_REDIS_URL` | _(empty)_ | Shared cache and quota state; in-process when empty. |
+| `ROUTER_TENANT_KEYS` | _(empty)_ | `tenant:key` bindings; bare `ROUTER_API_KEYS` keys use the default tenant. |
+| `ROUTER_OTLP_ENDPOINT` | _(empty)_ | OTLP/HTTP trace collector; tracing is a no-op when empty. |
+| `ROUTER_TRACE_PROMPT_CONTENT` | `false` | Records a bounded prefix of `public` prompts only. |
 | `ROUTER_BACKEND` | `mock` | `mock` or `vllm`. |
 | `ROUTER_VLLM_BASE_URL` | `http://127.0.0.1:8001` | vLLM OpenAI-compatible endpoint. |
 | `ROUTER_BACKEND_TIMEOUT_SECONDS` | `60` | Per-request engine timeout. |

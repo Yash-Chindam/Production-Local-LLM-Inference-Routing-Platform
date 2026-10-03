@@ -12,6 +12,7 @@ from typing import Annotated
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse, StreamingResponse
+from opentelemetry.trace import TracerProvider
 
 from llm_router.admission import (
     AdmissionController,
@@ -60,6 +61,7 @@ from llm_router.registry import (
     strictest_privacy,
 )
 from llm_router.routing import NoEligibleModelError, Router, default_model_profiles
+from llm_router.tracing import RequestSpan, Tracing, build_tracer_provider
 
 
 @dataclass(frozen=True)
@@ -102,6 +104,7 @@ def create_app(
     registry: Registry | None = None,
     redis_client: RedisLike | None = None,
     engine_stats: EngineStatsCollector | None = None,
+    tracer_provider: TracerProvider | None = None,
 ) -> FastAPI:
     runtime_settings = settings or get_settings()
     catalog = registry if registry is not None else _load_catalog(runtime_settings.registry_path)
@@ -144,6 +147,10 @@ def create_app(
         else None
     )
     cold_start = ColdStartTracker()
+    tracing = Tracing(
+        tracer_provider or build_tracer_provider(runtime_settings),
+        record_prompt_content=runtime_settings.trace_prompt_content,
+    )
     # One gateway deployment faces one engine target, so engine-level telemetry
     # and cold starts are attributed to that target rather than to a model.
     engine_label = runtime_settings.backend
@@ -479,41 +486,51 @@ def create_app(
         decision: RouteDecision,
         started: float,
         queue_seconds: float,
+        span: RequestSpan,
     ) -> AsyncIterator[str]:
         completion_id = f"chatcmpl-{uuid.uuid4().hex}"
         created = int(time.time())
         model_id = decision.profile.id
         collected: list[str] = []
 
-        yield _chunk(completion_id, created, model_id, delta={"role": "assistant"})
-        async for delta in inference_backend.stream(payload, decision):
-            collected.append(delta)
-            yield _chunk(completion_id, created, model_id, delta={"content": delta})
-        yield _chunk(completion_id, created, model_id, delta={}, finish_reason="stop")
-        yield "data: [DONE]\n\n"
+        # The stream outlives the handler, so it owns the span from here and
+        # ends it whether generation finishes, fails, or the client leaves.
+        try:
+            yield _chunk(completion_id, created, model_id, delta={"role": "assistant"})
+            async for delta in inference_backend.stream(payload, decision):
+                collected.append(delta)
+                yield _chunk(completion_id, created, model_id, delta={"content": delta})
+            yield _chunk(completion_id, created, model_id, delta={}, finish_reason="stop")
+            yield "data: [DONE]\n\n"
 
-        text = "".join(collected)
-        prompt_tokens = max(1, len(prompt) // 4)
-        completion_tokens = max(1, len(text) // 4)
-        if payload.routing.structured:
-            telemetry.record_structured_output(decision, valid=structured_output_valid(text))
-        telemetry.record_completion(
-            decision,
-            latency_seconds=time.perf_counter() - started,
-            queue_seconds=queue_seconds,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-        )
-        await _store_cache(
-            payload,
-            prompt,
-            cache_key,
-            subject,
-            decision,
-            BackendResult(
-                text=text, prompt_tokens=prompt_tokens, completion_tokens=completion_tokens
-            ),
-        )
+            text = "".join(collected)
+            prompt_tokens = max(1, len(prompt) // 4)
+            completion_tokens = max(1, len(text) // 4)
+            span.set_usage(prompt_tokens=prompt_tokens, completion_tokens=completion_tokens)
+            if payload.routing.structured:
+                telemetry.record_structured_output(decision, valid=structured_output_valid(text))
+            telemetry.record_completion(
+                decision,
+                latency_seconds=time.perf_counter() - started,
+                queue_seconds=queue_seconds,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+            )
+            await _store_cache(
+                payload,
+                prompt,
+                cache_key,
+                subject,
+                decision,
+                BackendResult(
+                    text=text, prompt_tokens=prompt_tokens, completion_tokens=completion_tokens
+                ),
+            )
+        except Exception as error:
+            span.fail(error)
+            raise
+        finally:
+            span.end()
 
     @app.post("/v1/chat/completions", response_model=None)
     async def chat_completions(
@@ -521,12 +538,33 @@ def create_app(
         response: Response,
         principal: Annotated[Principal, Depends(authenticate)],
     ) -> ChatCompletionResponse | StreamingResponse:
+        span = tracing.start_request()
+        try:
+            result = await _complete(payload, response, principal, span)
+        except Exception as error:
+            span.fail(error)
+            raise
+        finally:
+            if not span.handed_off:
+                span.end()
+        trace_id = span.trace_id
+        if trace_id is not None:
+            # A response returned directly does not inherit injected headers.
+            target = result if isinstance(result, Response) else response
+            target.headers["X-Trace-Id"] = trace_id
+        return result
+
+    async def _complete(
+        payload: ChatCompletionRequest,
+        response: Response,
+        principal: Principal,
+        span: RequestSpan,
+    ) -> ChatCompletionResponse | StreamingResponse:
         started = time.perf_counter()
         tenant = _entitlement(principal)
         # Quota and cache are scoped to the tenant, not the credential, so
         # rotating a key neither resets a quota nor orphans a cache.
         subject = principal.tenant_id
-        await _consume_quota(subject, tenant)
 
         declared_privacy = payload.routing.privacy
         if tenant is not None:
@@ -543,6 +581,11 @@ def create_app(
         privacy_raised_from = (
             declared_privacy if payload.routing.privacy is not declared_privacy else None
         )
+        # Described before the quota is charged so a rejected request is still
+        # attributed to its tenant, and after the floor so the trace is redacted
+        # under the effective class rather than the declared one.
+        span.set_request(payload, tenant_id=subject, declared_privacy=declared_privacy)
+        await _consume_quota(subject, tenant)
 
         prompt = payload.prompt
         cache_key = build_cache_key(
@@ -550,8 +593,13 @@ def create_app(
         )
 
         cached = await _lookup_cache(payload, prompt, cache_key, subject)
+        span.set_cache("miss" if cached is None else cached[0])
         if cached is not None:
             hit_name, entry = cached
+            span.set_served_from_cache(model_id=entry.model_id, model_revision=entry.model_revision)
+            span.set_usage(
+                prompt_tokens=entry.prompt_tokens, completion_tokens=entry.completion_tokens
+            )
             if payload.stream:
                 return _cached_stream(entry, hit_name)
             response.headers["X-Cache"] = hit_name
@@ -583,6 +631,7 @@ def create_app(
             ),
             privacy_raised_from=privacy_raised_from,
         )
+        span.set_route(decision)
         if runtime_settings.cache_enabled:
             decision_cache.set(prompt, decision.task)
         telemetry.record_route(decision, privacy=payload.routing.privacy.value)
@@ -601,6 +650,7 @@ def create_app(
                 telemetry.inflight_requests.inc()
                 try:
                     if payload.stream:
+                        span.handed_off = True
                         return StreamingResponse(
                             _stream_completion(
                                 payload,
@@ -610,6 +660,7 @@ def create_app(
                                 decision,
                                 started,
                                 queue_seconds,
+                                span,
                             ),
                             media_type="text/event-stream",
                             headers=_route_headers(decision, "miss"),
@@ -621,6 +672,9 @@ def create_app(
             telemetry.queued_requests.dec()
             raise
 
+        span.set_usage(
+            prompt_tokens=result.prompt_tokens, completion_tokens=result.completion_tokens
+        )
         if payload.routing.structured:
             telemetry.record_structured_output(decision, valid=structured_output_valid(result.text))
         telemetry.record_completion(
