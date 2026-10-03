@@ -129,6 +129,18 @@ class Metrics:
             buckets=LATENCY_BUCKETS,
             registry=self.registry,
         )
+        self.canary_requests_total = Counter(
+            "router_canary_requests_total",
+            "Requests on a canaried route by subject, arm, and outcome.",
+            ["subject", "arm", "outcome"],
+            registry=self.registry,
+        )
+        self.canary_rollbacks_total = Counter(
+            "router_canary_rollbacks_total",
+            "Canaries suspended automatically after failing their criteria.",
+            ["subject"],
+            registry=self.registry,
+        )
         self.engine_circuit_open = Gauge(
             "router_engine_circuit_open",
             "Engine circuit state: 0 closed, 0.5 half-open, 1 open.",
@@ -242,6 +254,14 @@ class Metrics:
         self.quality_prediction_error.labels(model=model, signal="structured_validity").observe(
             abs(decision.profile.quality - observed)
         )
+
+    def record_canary(self, subject: str, *, arm: str, ok: bool) -> None:
+        self.canary_requests_total.labels(
+            subject=subject, arm=arm, outcome="success" if ok else "error"
+        ).inc()
+
+    def record_canary_rollback(self, subject: str) -> None:
+        self.canary_rollbacks_total.labels(subject=subject).inc()
 
     def record_circuit_state(self, state: str, *, engine: str) -> None:
         value = {"closed": 0.0, "half-open": 0.5, "open": 1.0}[state]

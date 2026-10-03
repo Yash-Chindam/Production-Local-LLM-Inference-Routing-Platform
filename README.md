@@ -187,7 +187,7 @@ in-process and correct for a single replica only. Install the client with the ex
 python -m pip install -e ".[redis]"
 ```
 
-CD renders the canary plan (with its rollback target and triggers), verifies
+CD renders the canary plans (one per track, each with its rollback target), verifies
 `config/ray-serve.yaml` against the catalog, and validates the manifests with kubeconform.
 Applying to a cluster stays disabled until a deployment destination is configured.
 
@@ -211,6 +211,7 @@ be served. A request can never introduce a model path, revision, or adapter.
 | `GET /v1/registry/adapters` | Promoted LoRA and QLoRA adapters. |
 | `GET /v1/registry/deployments` | Deployment revisions and rollback targets. |
 | `GET /v1/registry/variants` | Optimization variants with their measured deltas. |
+| `GET /v1/registry/canaries` | Canary plans by track, with live adapter state. |
 
 Send `routing.domain` to request a domain adapter; the router applies the promoted adapter
 with the largest measured quality gain for that base revision and task, or none at all.
@@ -237,6 +238,53 @@ Cold start is measured, not assumed (see `router_model_load_seconds` below). Tie
 warm replica never pay it on the request path. The high-capability tier scales to zero, so its
 first request after an idle period waits for a full model load: budget for it, or raise its
 `min_replicas`.
+
+## Canaries and rollback
+
+Models, adapters, and router policies are canaried on separate tracks, each with its own plan
+naming exactly what it rolls back to:
+
+```bash
+python -m llm_router.canary
+```
+
+| Track | Canary | Rolls back to |
+|---|---|---|
+| `model` | A deployment revision | The revision in `previous_revision_id`. |
+| `adapter` | A `staging` adapter | The `production` adapter for the same base revision and domain, or the base model alone. |
+| `policy` | The policy `version` | `previous_version`. |
+
+One rule decides every track. Failed readiness rolls back at once. Once 50 requests have been
+observed, the canary rolls back if its error rate exceeds 1%, its p95 latency exceeds the
+strictest tier objective among the models it serves, or its observed quality falls more than
+0.05 below their benchmarked quality. Error rate and latency only count against the canary
+when the stable baseline does not share the problem, so an engine outage that degrades both is
+not blamed on the change. A canary that stays clean for 500 requests is reported ready.
+
+**The adapter track runs inside the gateway.** A staged adapter is offered
+`canary_traffic_percent` of eligible requests, bucketed by tenant and prompt so a retry cannot
+flip between adapters. It is suspended automatically the moment it fails, and the production
+adapter serves everything again. A canary's responses are never cached, so nothing it produced
+outlives a rollback. Before this, a staged adapter with the larger measured gain took all of the
+traffic.
+
+`GET /v1/registry/canaries` lists every plan with live state for adapters (`in-progress`,
+`ready-to-promote`, or `rolled-back`, with the reasons). `router_canary_requests_total` and
+`router_canary_rollbacks_total` report it to Prometheus. State is per gateway replica: each
+reaches the same verdict from its own share of traffic.
+
+**Model and policy canaries are rollouts** of the serving pool or the gateway, so whatever
+controls that rollout evaluates the plan through the same rule:
+
+```bash
+python -m llm_router.canary --plan model:deploy-0002 --observation observed.json --baseline stable.json
+```
+
+It exits `0` to promote, `2` to hold, and `3` to roll back, and prints the rollback target. No
+rollout controller is wired to it yet, so on those two tracks the decision is automatic and the
+action is not.
+
+Promotion is never automatic on any track. It is a catalog change and goes through review.
 
 ## Tenants
 

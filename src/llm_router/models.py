@@ -82,6 +82,9 @@ class RouteDecision(BaseModel):
     task_source: str = "declared"
     task_confidence: float | None = None
     complexity: str | None = None
+    # Set when a staged adapter exists for this route: which arm served it.
+    canary_arm: str | None = None
+    canary_subject: str | None = None
 
 
 class ChatCompletionChoice(BaseModel):

@@ -106,6 +106,8 @@ class RequestSpan:
                 "router.task.source": decision.task_source,
                 "router.task.confidence": decision.task_confidence,
                 "router.complexity": decision.complexity,
+                "router.canary.arm": decision.canary_arm,
+                "router.canary.subject": decision.canary_subject,
                 "router.route.reason": decision.reason,
                 "router.route.score": decision.score,
                 "router.route.candidates": decision.candidate_count,

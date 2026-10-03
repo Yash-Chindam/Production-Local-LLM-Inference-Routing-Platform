@@ -60,18 +60,10 @@ jobs:
       - run: python -m pip install -e ".[dev]"
       - name: Verify the serving configuration matches the catalog
         run: python -m llm_router.serving > /tmp/ray-serve.yaml && diff -u config/ray-serve.yaml /tmp/ray-serve.yaml
-      - name: Render the canary and rollback plan
-        run: |
-          python - <<'PY' > canary-plan.json
-          import json
-          from llm_router.registry import load_registry
-          from llm_router.serving import canary_config
-          registry = load_registry("config/registry.yaml")
-          production = [item for item in registry.deployments if item.stage.value == "production"]
-          plan = canary_config(registry, production[0].id)
-          plan["release_ref"] = "${{ env.RELEASE_REF }}"
-          print(json.dumps(plan, indent=2))
-          PY
+      - name: Render the canary and rollback plans
+        # One plan per track (model, adapter, policy), each naming what it
+        # rolls back to and the criteria that trigger it.
+        run: python -m llm_router.canary > canary-plan.json
       - name: Validate the Kubernetes manifests
         run: |
           curl -sSLo kubeconform.tar.gz https://github.com/yannh/kubeconform/releases/download/v0.7.0/kubeconform-linux-amd64.tar.gz

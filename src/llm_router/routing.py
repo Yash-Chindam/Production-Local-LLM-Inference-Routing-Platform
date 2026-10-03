@@ -12,7 +12,8 @@ from llm_router.models import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle guard for type checking only
-    from llm_router.registry import Registry
+    from llm_router.canary import CanaryMonitor
+    from llm_router.registry import AdapterProfile, Registry
 
 
 # How strongly predicted complexity pulls a request toward higher measured
@@ -95,6 +96,8 @@ class Router:
     # keeps the router usable where no training data is deployed.
     classifier: TaskClassifier | None = None
     load: LoadTracker | None = None
+    # Without a monitor a staged adapter takes no traffic at all.
+    canary: "CanaryMonitor | None" = None
 
     def classify_task(self, request: ChatCompletionRequest) -> TaskClass:
         if request.routing.task is not None:
@@ -128,6 +131,7 @@ class Router:
         quality_floor: float = 0.0,
         tenant_allows_external: bool = True,
         privacy_raised_from: PrivacyClass | None = None,
+        canary_key: str = "",
     ) -> RouteDecision:
         prediction = (
             self.classifier.predict(request.prompt) if self.classifier is not None else None
@@ -213,15 +217,8 @@ class Router:
             )
 
         selected = max(candidates, key=score)
-        adapter = (
-            self.registry.select_adapter(
-                model_id=selected.id,
-                revision=selected.revision,
-                domain=request.routing.domain,
-                task=task,
-            )
-            if self.registry is not None
-            else None
+        adapter, canary_arm, canary_subject = self._select_adapter(
+            selected, request.routing.domain, task, canary_key
         )
         reason = (
             f"selected highest policy score among {len(candidates)} eligible model(s); "
@@ -250,6 +247,10 @@ class Router:
                 f"; applied adapter {adapter.id} for domain {adapter.domain} "
                 f"(measured quality delta {adapter.benchmark.quality_delta:+.3f})"
             )
+        if canary_arm == "canary":
+            reason += f"; canary arm of {canary_subject}"
+        elif canary_arm == "stable":
+            reason += f"; stable arm while {canary_subject} is canaried"
         return RouteDecision(
             profile=selected,
             task=task,
@@ -261,7 +262,43 @@ class Router:
             task_source=task_source,
             task_confidence=task_confidence,
             complexity=None if complexity is None else complexity.value,
+            canary_arm=canary_arm,
+            canary_subject=canary_subject,
         )
+
+    def _select_adapter(
+        self, selected: ModelProfile, domain: str | None, task: TaskClass, canary_key: str
+    ) -> "tuple[AdapterProfile | None, str | None, str | None]":
+        """Choose the production adapter, or its staged canary for a share of traffic.
+
+        A staged adapter never replaces the production one outright. It is
+        offered a fixed share of eligible requests while the monitor still
+        trusts it, and none once it has been rolled back.
+        """
+
+        if self.registry is None:
+            return None, None, None
+        from llm_router.registry import LifecycleStage
+
+        stable = self.registry.select_adapter(
+            model_id=selected.id,
+            revision=selected.revision,
+            domain=domain,
+            task=task,
+            stage=LifecycleStage.PRODUCTION,
+        )
+        staged = self.registry.select_adapter(
+            model_id=selected.id,
+            revision=selected.revision,
+            domain=domain,
+            task=task,
+            stage=LifecycleStage.STAGING,
+        )
+        if staged is None or self.canary is None or staged.id not in self.canary.subjects:
+            return stable, None, None
+        if self.canary.takes(staged.id, canary_key):
+            return staged, "canary", staged.id
+        return stable, "stable", staged.id
 
     @staticmethod
     def _privacy_allows(profile: ModelProfile, privacy: PrivacyClass) -> bool:
