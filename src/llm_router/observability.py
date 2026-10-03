@@ -129,6 +129,12 @@ class Metrics:
             buckets=LATENCY_BUCKETS,
             registry=self.registry,
         )
+        self.fallbacks_total = Counter(
+            "router_fallbacks_total",
+            "Requests re-routed after the model first chosen failed.",
+            ["from_model", "to_model", "cause"],
+            registry=self.registry,
+        )
         self.canary_requests_total = Counter(
             "router_canary_requests_total",
             "Requests on a canaried route by subject, arm, and outcome.",
@@ -254,6 +260,9 @@ class Metrics:
         self.quality_prediction_error.labels(model=model, signal="structured_validity").observe(
             abs(decision.profile.quality - observed)
         )
+
+    def record_fallback(self, *, from_model: str, to_model: str, cause: str) -> None:
+        self.fallbacks_total.labels(from_model=from_model, to_model=to_model, cause=cause).inc()
 
     def record_canary(self, subject: str, *, arm: str, ok: bool) -> None:
         self.canary_requests_total.labels(

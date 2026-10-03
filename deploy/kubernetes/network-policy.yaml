@@ -38,6 +38,14 @@ spec:
       ports:
         - protocol: TCP
           port: 6379
+    # The gateway never reaches a provider itself, only the proxy that does.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: litellm-proxy
+      ports:
+        - protocol: TCP
+          port: 4000
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

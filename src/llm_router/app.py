@@ -24,6 +24,8 @@ from llm_router.backends import (
     BackendOutOfMemoryError,
     BackendResult,
     BackendUnavailableError,
+    DispatchingBackend,
+    ExternalDispatchRefusedError,
     InferenceBackend,
     MockInferenceBackend,
     VLLMBackend,
@@ -51,6 +53,7 @@ from llm_router.models import (
     ChatCompletionRequest,
     ChatCompletionResponse,
     ChatMessage,
+    PrivacyClass,
     RouteDecision,
     Usage,
 )
@@ -163,7 +166,32 @@ def create_app(
         failure_threshold=runtime_settings.engine_failure_threshold,
         cooldown_seconds=runtime_settings.engine_cooldown_seconds,
     )
-    inference_backend: InferenceBackend = ResilientBackend(raw_backend, circuit)
+    external_client = (
+        httpx.AsyncClient() if backend is None and runtime_settings.external_base_url else None
+    )
+    # An injected or mock backend answers external routes too, which keeps
+    # tests and local development free of a provider.
+    raw_external: InferenceBackend = (
+        VLLMBackend(
+            base_url=runtime_settings.external_base_url,
+            client=external_client,
+            request_timeout_seconds=runtime_settings.backend_timeout_seconds,
+            api_key=runtime_settings.external_api_key,
+            health_path="/health/liveliness",
+        )
+        if external_client is not None
+        else raw_backend
+    )
+    # Each target has its own circuit: a lost GPU node must not close the
+    # route to the provider, nor a provider outage the route to the engine.
+    external_circuit = CircuitBreaker(
+        failure_threshold=runtime_settings.engine_failure_threshold,
+        cooldown_seconds=runtime_settings.engine_cooldown_seconds,
+    )
+    inference_backend: InferenceBackend = DispatchingBackend(
+        local=ResilientBackend(raw_backend, circuit),
+        external=ResilientBackend(raw_external, external_circuit),
+    )
     telemetry = metrics if metrics is not None else Metrics()
     engine_telemetry = engine_stats or (
         EngineStatsCollector(base_url=runtime_settings.vllm_base_url, client=engine_client)
@@ -211,6 +239,8 @@ def create_app(
         await admission.drain(runtime_settings.shutdown_grace_seconds)
         if engine_client is not None:
             await engine_client.aclose()
+        if external_client is not None:
+            await external_client.aclose()
 
     app = FastAPI(
         title="Local LLM Inference Router",
@@ -259,6 +289,16 @@ def create_app(
             status_code=503,
             headers={"Retry-After": "1"},
             content={"error": {"message": str(error), "type": "overloaded"}},
+        )
+
+    @app.exception_handler(ExternalDispatchRefusedError)
+    async def refused_handler(_: Request, error: ExternalDispatchRefusedError) -> JSONResponse:
+        # Reaching here means routing chose an external model for data that
+        # must stay local. The request is refused, and counted so it is seen.
+        telemetry.record_rejection("external_dispatch_refused")
+        return JSONResponse(
+            status_code=500,
+            content={"error": {"message": str(error), "type": "policy_violation"}},
         )
 
     @app.exception_handler(BackendOutOfMemoryError)
@@ -323,6 +363,7 @@ def create_app(
         # gateway stays the single scrape target for the whole serving path and
         # no background poller runs when nobody is collecting.
         telemetry.record_circuit_state(circuit.state, engine=engine_label)
+        telemetry.record_circuit_state(external_circuit.state, engine="external")
         if engine_telemetry is not None:
             stats = await engine_telemetry.sample()
             if stats is not None:
@@ -554,6 +595,38 @@ def create_app(
         )
         if verdict is not None and verdict.action == "rollback":
             telemetry.record_canary_rollback(decision.canary_subject)
+
+    def _fallback_route(
+        payload: ChatCompletionRequest,
+        failed: RouteDecision,
+        tenant: TenantRecord | None,
+        privacy_raised_from: PrivacyClass | None,
+    ) -> RouteDecision | None:
+        """Find an approved external route for a request the local engine failed.
+
+        Only a local failure falls back, and only to a model the request was
+        already entitled to: the same privacy, tenant, operator, and opt-in
+        rules apply as on the first attempt.
+        """
+
+        if not failed.profile.local:
+            return None
+        try:
+            return router.select(
+                payload,
+                task=failed.task,
+                permitted_models=(
+                    catalog.permitted_models_for(tenant) if catalog is not None else None
+                ),
+                quality_floor=tenant.quality_floor if tenant is not None else 0.0,
+                tenant_allows_external=(
+                    tenant.allow_external_fallback is not False if tenant is not None else True
+                ),
+                privacy_raised_from=privacy_raised_from,
+                fallback_from=failed.profile.id,
+            )
+        except NoEligibleModelError:
+            return None
 
     async def _consume_quota(subject: str, tenant: TenantRecord | None) -> None:
         # A tenant may carry its own limit; absent one the platform default
@@ -827,10 +900,23 @@ def create_app(
             )
 
         try:
-            result = await inference_backend.generate(payload, decision)
-        except BackendUnavailableError:
-            _record_canary(decision, ok=False, started=started)
-            raise
+            try:
+                result = await inference_backend.generate(payload, decision)
+            except BackendUnavailableError as error:
+                _record_canary(decision, ok=False, started=started)
+                fallback = _fallback_route(payload, decision, tenant, privacy_raised_from)
+                if fallback is None:
+                    raise
+                # Declared, attributed, and counted: never a silent switch.
+                telemetry.record_fallback(
+                    from_model=decision.profile.id,
+                    to_model=fallback.profile.id,
+                    cause=type(error).__name__,
+                )
+                telemetry.record_route(fallback, privacy=payload.routing.privacy.value)
+                decision = fallback
+                span.set_route(decision)
+                result = await inference_backend.generate(payload, decision)
         finally:
             telemetry.inflight_requests.dec()
             admission.release()
