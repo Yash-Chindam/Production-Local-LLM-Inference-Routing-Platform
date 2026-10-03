@@ -181,6 +181,27 @@ deployments:
       small-specialist: sha256:mock-small-previous
     stage: deprecated
 
+# Engine optimization variants (section 9). Each is an experiment against one
+# immutable base revision and cannot leave development until a baseline and a
+# variant benchmark, measured on the same dataset, workload and hardware, show
+# no quality regression. Neither has been measured yet, so both stay in
+# development and are rendered only as never-warm experiments.
+variants:
+  - id: general-gptq
+    base_model_id: general-local
+    base_revision: mock-general@sha256:dev
+    kind: quantization
+    quantization: gptq
+    description: GPTQ build of the general tier, to halve its memory on an A10G.
+
+  - id: high-capability-speculative
+    base_model_id: high-capability
+    base_revision: mock-high@sha256:dev
+    kind: speculative-decoding
+    draft_model_id: small-specialist
+    num_speculative_tokens: 5
+    description: Drafts with the small specialist; only worth keeping if acceptance is high.
+
 # Per-tenant entitlement (sections 7.1 and 14). Entitlements are governance and
 # belong here; the credentials that bind a caller to a tenant are supplied by
 # ROUTER_TENANT_KEYS from the secret manager and are never committed.

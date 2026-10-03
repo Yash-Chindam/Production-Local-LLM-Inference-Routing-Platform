@@ -97,3 +97,46 @@ applications:
     tensor_parallel_size: 2
     enable_prefix_caching: true
     enable_chunked_prefill: true
+experiments:
+- model_id: general-local--general-gptq
+  base_model_id: general-local
+  model_revision: mock-general@sha256:dev
+  variant: general-gptq
+  kind: quantization
+  stage: development
+  has_evidence: false
+  accelerator_type: nvidia-a10g
+  deployment_config:
+    autoscaling_config:
+      min_replicas: 0
+      max_replicas: 1
+    ray_actor_options:
+      num_gpus: 1
+  engine_kwargs:
+    max_model_len: 32768
+    tensor_parallel_size: 1
+    enable_prefix_caching: true
+    enable_chunked_prefill: true
+    quantization: gptq
+- model_id: high-capability--high-capability-speculative
+  base_model_id: high-capability
+  model_revision: mock-high@sha256:dev
+  variant: high-capability-speculative
+  kind: speculative-decoding
+  stage: development
+  has_evidence: false
+  accelerator_type: nvidia-a100
+  deployment_config:
+    autoscaling_config:
+      min_replicas: 0
+      max_replicas: 1
+    ray_actor_options:
+      num_gpus: 2
+  engine_kwargs:
+    max_model_len: 65536
+    tensor_parallel_size: 2
+    enable_prefix_caching: true
+    enable_chunked_prefill: true
+    speculative_config:
+      model: registry://small-specialist@mock-small@sha256:dev
+      num_speculative_tokens: 5
