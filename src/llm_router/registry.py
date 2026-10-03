@@ -152,6 +152,70 @@ class BenchmarkRun(BaseModel):
     latency_p95_ms: float = Field(ge=0.0)
     throughput_rps: float = Field(ge=0.0)
     gpu_seconds_per_request: float = Field(default=0.0, ge=0.0)
+    # Section 9 asks for memory to be measured for every quantized variant.
+    gpu_memory_gb: float | None = Field(default=None, ge=0.0)
+    # Share of draft tokens the target model kept, for speculative decoding.
+    draft_acceptance_rate: float | None = Field(default=None, ge=0.0, le=1.0)
+
+
+class VariantKind(StrEnum):
+    QUANTIZATION = "quantization"
+    SPECULATIVE_DECODING = "speculative-decoding"
+
+
+class EngineVariant(BaseModel):
+    """One engine optimization, held as an experiment until evidence promotes it.
+
+    Section 9 treats quantization formats as independent variants and
+    speculative decoding as an experiment, and the design targets require a
+    documented quality delta for every optimization variant. A variant is
+    therefore declared against one immutable base revision and cannot leave
+    development without a baseline and a variant benchmark to compare.
+    """
+
+    id: str
+    base_model_id: str
+    base_revision: str
+    kind: VariantKind
+    quantization: Quantization | None = None
+    draft_model_id: str | None = None
+    num_speculative_tokens: int | None = Field(default=None, ge=1)
+    stage: LifecycleStage = LifecycleStage.DEVELOPMENT
+    baseline_benchmark: str | None = None
+    variant_benchmark: str | None = None
+    quality_tolerance: float = Field(default=0.01, ge=0.0, le=1.0)
+    description: str = ""
+
+    @model_validator(mode="after")
+    def require_the_settings_its_kind_needs(self) -> "EngineVariant":
+        if self.kind is VariantKind.QUANTIZATION:
+            if self.quantization in {None, Quantization.NONE}:
+                raise ValueError(f"variant {self.id} must name a quantization format")
+        elif self.draft_model_id is None or self.num_speculative_tokens is None:
+            raise ValueError(
+                f"variant {self.id} must name a draft model and a speculative token count"
+            )
+        return self
+
+    @property
+    def has_evidence(self) -> bool:
+        return self.baseline_benchmark is not None and self.variant_benchmark is not None
+
+
+class VariantVerdict(BaseModel):
+    """Variant versus baseline on the same workload, with every regression named."""
+
+    variant_id: str
+    quality_delta: float
+    latency_p95_delta_ms: float
+    throughput_delta_rps: float
+    gpu_seconds_delta: float
+    gpu_memory_delta_gb: float | None
+    regressions: tuple[str, ...]
+
+    @property
+    def accepted(self) -> bool:
+        return not self.regressions
 
 
 class DeploymentRevision(BaseModel):
@@ -222,6 +286,7 @@ class Registry(BaseModel):
     benchmarks: tuple[BenchmarkRun, ...] = ()
     deployments: tuple[DeploymentRevision, ...] = ()
     tenants: tuple[TenantRecord, ...] = ()
+    variants: tuple[EngineVariant, ...] = ()
     policy: RoutePolicy = RoutePolicy()
 
     @model_validator(mode="after")
@@ -236,6 +301,46 @@ class Registry(BaseModel):
                     f"adapter {adapter.id} references unknown base "
                     f"{adapter.base_model_id}@{adapter.base_revision}"
                 )
+        variant_ids = {item.id for item in self.variants}
+        if len(variant_ids) != len(self.variants):
+            raise RegistryError("duplicate variant identifiers in catalog")
+        for item in self.variants:
+            if (item.base_model_id, item.base_revision) not in revisions:
+                raise RegistryError(
+                    f"variant {item.id} references unknown base "
+                    f"{item.base_model_id}@{item.base_revision}"
+                )
+            if item.draft_model_id is not None:
+                if item.draft_model_id not in model_ids:
+                    raise RegistryError(
+                        f"variant {item.id} names unknown draft model {item.draft_model_id}"
+                    )
+                if item.draft_model_id == item.base_model_id:
+                    raise RegistryError(f"variant {item.id} cannot draft with its own base model")
+            if item.has_evidence:
+                baseline = self._benchmark(item.baseline_benchmark or "")
+                measured = self._benchmark(item.variant_benchmark or "")
+                if baseline.model_revision != item.base_revision:
+                    raise RegistryError(
+                        f"variant {item.id} baseline was not measured on {item.base_revision}"
+                    )
+                # A delta only means something when nothing else changed.
+                for name in ("dataset_version", "workload_version", "hardware", "concurrency"):
+                    if getattr(baseline, name) != getattr(measured, name):
+                        raise RegistryError(
+                            f"variant {item.id} compares runs with different {name}"
+                        )
+            if item.stage in {LifecycleStage.STAGING, LifecycleStage.PRODUCTION}:
+                verdict = self.variant_verdict(item)
+                if verdict is None:
+                    raise RegistryError(
+                        f"variant {item.id} cannot leave development without a baseline "
+                        "and a variant benchmark"
+                    )
+                if not verdict.accepted:
+                    raise RegistryError(
+                        f"variant {item.id} cannot be promoted: {'; '.join(verdict.regressions)}"
+                    )
         tenant_ids = {tenant.id for tenant in self.tenants}
         if len(tenant_ids) != len(self.tenants):
             raise RegistryError("duplicate tenant identifiers in catalog")
@@ -246,6 +351,87 @@ class Registry(BaseModel):
                     f"tenant {tenant.id} permits unknown model(s): {', '.join(sorted(unknown))}"
                 )
         return self
+
+    def _benchmark(self, benchmark_id: str) -> BenchmarkRun:
+        run = next((item for item in self.benchmarks if item.id == benchmark_id), None)
+        if run is None:
+            raise RegistryError(f"unknown benchmark {benchmark_id}")
+        return run
+
+    def variant(self, variant_id: str) -> EngineVariant:
+        for item in self.variants:
+            if item.id == variant_id:
+                return item
+        raise RegistryError(f"unknown variant {variant_id}")
+
+    def variant_verdict(self, variant: EngineVariant) -> VariantVerdict | None:
+        """Compare a variant with its baseline, or None while it has no evidence.
+
+        Quality is never traded for speed: any loss beyond the tolerance is a
+        regression however large the gain. Speculative decoding must also
+        actually be faster, because low draft-token acceptance adds overhead,
+        and a quantized variant must show the memory it was meant to save.
+        """
+
+        if not variant.has_evidence:
+            return None
+        baseline = self._benchmark(variant.baseline_benchmark or "")
+        measured = self._benchmark(variant.variant_benchmark or "")
+        quality_delta = measured.quality_score - baseline.quality_score
+        latency_delta = measured.latency_p95_ms - baseline.latency_p95_ms
+        throughput_delta = measured.throughput_rps - baseline.throughput_rps
+        memory_delta = (
+            measured.gpu_memory_gb - baseline.gpu_memory_gb
+            if measured.gpu_memory_gb is not None and baseline.gpu_memory_gb is not None
+            else None
+        )
+
+        regressions: list[str] = []
+        if quality_delta < -variant.quality_tolerance:
+            regressions.append(
+                f"quality fell by {abs(quality_delta):.3f}, beyond the "
+                f"{variant.quality_tolerance:.3f} tolerance"
+            )
+        if variant.kind is VariantKind.SPECULATIVE_DECODING:
+            if latency_delta >= 0 and throughput_delta <= 0:
+                regressions.append(
+                    "speculative decoding added overhead: p95 latency did not fall and "
+                    "throughput did not rise"
+                )
+        elif memory_delta is None:
+            regressions.append("GPU memory was not measured for both runs")
+        elif memory_delta >= 0:
+            regressions.append(f"quantization did not reduce GPU memory ({memory_delta:+.1f} GB)")
+
+        return VariantVerdict(
+            variant_id=variant.id,
+            quality_delta=quality_delta,
+            latency_p95_delta_ms=latency_delta,
+            throughput_delta_rps=throughput_delta,
+            gpu_seconds_delta=(measured.gpu_seconds_per_request - baseline.gpu_seconds_per_request),
+            gpu_memory_delta_gb=memory_delta,
+            regressions=tuple(regressions),
+        )
+
+    def promoted_variants(self, model_id: str, revision: str) -> tuple[EngineVariant, ...]:
+        """Variants that have earned a place in the production engine settings."""
+
+        return tuple(
+            item
+            for item in self.variants
+            if item.stage is LifecycleStage.PRODUCTION
+            and item.base_model_id == model_id
+            and item.base_revision == revision
+        )
+
+    def experimental_variants(self) -> tuple[EngineVariant, ...]:
+        """Variants still being measured; deprecated ones are no longer served."""
+
+        return tuple(
+            item
+            for item in self.variants
+            if item.stage in {LifecycleStage.DEVELOPMENT, LifecycleStage.STAGING}
+        )
 
     def tenant(self, tenant_id: str) -> TenantRecord | None:
         return next((record for record in self.tenants if record.id == tenant_id), None)
@@ -362,3 +548,10 @@ def load_registry(path: str | Path) -> Registry:
 def catalog_revisions(registry: Registry) -> Iterable[str]:
     yield from (card.revision for card in registry.servable_models())
     yield from (adapter.adapter_revision for adapter in registry.servable_adapters())
+    # Promoting an engine variant changes what a model returns, so it has to
+    # invalidate cached responses exactly as a new revision would.
+    yield from (
+        f"{variant.id}@{variant.base_revision}"
+        for variant in registry.variants
+        if variant.stage is LifecycleStage.PRODUCTION
+    )

@@ -14,7 +14,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import httpx
+
+from llm_router.engine_stats import GPU_MEMORY_USED, parse_exposition
 from llm_router.models import TaskClass
+
+DRAFT_ACCEPTANCE_RATE = "vllm:spec_decode_draft_acceptance_rate"
 
 
 class EvaluationError(RuntimeError):
@@ -265,3 +270,156 @@ def render_comparison(comparison: Comparison) -> str:
     ]
     lines.extend(f"regression: {reason}" for reason in comparison.regressions)
     return "\n".join(lines)
+
+
+def endpoint_transport(
+    client: httpx.Client,
+    *,
+    base_url: str,
+    model: str,
+    api_key: str = "",
+    gpu_count: int = 1,
+    max_tokens: int = 256,
+) -> Callable[[EvaluationCase], tuple[str, bool, float]]:
+    """Build a transport that runs a case against an OpenAI-compatible endpoint.
+
+    GPU seconds are the request's wall time multiplied by the accelerators the
+    model occupies. That is exact for the sequential runs this harness makes
+    and an upper bound once requests share a batch.
+    """
+
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+
+    def invoke(case: EvaluationCase) -> tuple[str, bool, float]:
+        started = time.perf_counter()
+        try:
+            response = client.post(
+                f"{base_url}/v1/chat/completions",
+                headers=headers,
+                json={
+                    "model": model,
+                    "messages": [{"role": "user", "content": case.prompt}],
+                    "max_tokens": max_tokens,
+                    "temperature": 0.0,
+                },
+            )
+            text = str(response.json()["choices"][0]["message"]["content"])
+            succeeded = response.status_code < 400
+        except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError):
+            text, succeeded = "", False
+        return text, succeeded, (time.perf_counter() - started) * gpu_count
+
+    return invoke
+
+
+def engine_measurements(client: httpx.Client, base_url: str) -> dict[str, float]:
+    """Read memory and draft acceptance from the engine after a run, if published."""
+
+    try:
+        response = client.get(f"{base_url}/metrics")
+    except httpx.HTTPError:
+        return {}
+    if response.status_code >= 400:
+        return {}
+    samples = parse_exposition(response.text)
+    measured: dict[str, float] = {}
+    memory = [value for _, value in samples.get(GPU_MEMORY_USED, [])]
+    if memory:
+        # DCGM reports mebibytes per accelerator; the catalog records gigabytes.
+        measured["gpu_memory_gb"] = round(sum(memory) / 1024, 2)
+    acceptance = [value for _, value in samples.get(DRAFT_ACCEPTANCE_RATE, [])]
+    if acceptance:
+        measured["draft_acceptance_rate"] = round(sum(acceptance) / len(acceptance), 4)
+    return measured
+
+
+def benchmark_document(
+    report: EvaluationReport,
+    cases: Sequence[EvaluationCase],
+    *,
+    benchmark_id: str,
+    dataset_version: str,
+    hardware: str,
+    task: TaskClass | None = None,
+    measurements: dict[str, float] | None = None,
+) -> dict[str, Any]:
+    """Shape a report as a catalog benchmark record, ready to commit as evidence."""
+
+    lengths = sorted(max(1, len(case.prompt) // 4) for case in cases)
+    document: dict[str, Any] = {
+        "id": benchmark_id,
+        "dataset_version": dataset_version,
+        "workload_version": "sequential-1",
+        "hardware": hardware,
+        "driver": str(report.metadata.get("driver", "unrecorded")),
+        "container_digest": str(report.metadata.get("container_digest", "unrecorded")),
+        "engine_revision": str(report.metadata.get("engine_revision", "unrecorded")),
+        "model_revision": report.model_revision,
+        "concurrency": 1,
+        "prompt_tokens_p50": int(percentile(lengths, 0.50)),
+        "prompt_tokens_p95": int(percentile(lengths, 0.95)),
+        "quality_score": round(report.quality_score, 4),
+        "latency_p95_ms": round(report.latency_p95_ms, 2),
+        "throughput_rps": round(report.throughput_rps, 3),
+        "gpu_seconds_per_request": round(report.gpu_seconds_per_successful_request, 4),
+    }
+    if task is not None:
+        document["task"] = task.value
+    document.update(measurements or {})
+    return document
+
+
+def main(argv: Sequence[str] | None = None) -> None:  # pragma: no cover - command-line wrapper
+    """Benchmark a live endpoint and print a catalog record for the result."""
+
+    import argparse
+
+    import yaml
+
+    parser = argparse.ArgumentParser(description=main.__doc__)
+    parser.add_argument("--base-url", required=True)
+    parser.add_argument("--model", required=True, help="served model or experiment name")
+    parser.add_argument("--model-revision", required=True)
+    parser.add_argument("--dataset", required=True)
+    parser.add_argument("--dataset-version", required=True)
+    parser.add_argument("--benchmark-id", required=True)
+    parser.add_argument("--hardware", required=True)
+    parser.add_argument("--task", choices=[item.value for item in TaskClass])
+    parser.add_argument("--api-key", default="")
+    parser.add_argument("--gpu-count", type=int, default=1)
+    arguments = parser.parse_args(argv)
+
+    cases = load_dataset(arguments.dataset)
+    with httpx.Client(timeout=120.0) as client:
+        started = time.perf_counter()
+        outcomes = execute(
+            cases,
+            endpoint_transport(
+                client,
+                base_url=arguments.base_url,
+                model=arguments.model,
+                api_key=arguments.api_key,
+                gpu_count=arguments.gpu_count,
+            ),
+        )
+        report = build_report(
+            outcomes,
+            model_id=arguments.model,
+            model_revision=arguments.model_revision,
+            wall_clock_seconds=time.perf_counter() - started,
+        )
+        measurements = engine_measurements(client, arguments.base_url)
+    document = benchmark_document(
+        report,
+        cases,
+        benchmark_id=arguments.benchmark_id,
+        dataset_version=arguments.dataset_version,
+        hardware=arguments.hardware,
+        task=TaskClass(arguments.task) if arguments.task else None,
+        measurements=measurements,
+    )
+    print(yaml.safe_dump([document], sort_keys=False), end="")
+
+
+if __name__ == "__main__":  # pragma: no cover - command-line entry point
+    main()

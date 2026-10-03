@@ -133,6 +133,39 @@ python -m llm_router.serving > config/ray-serve.yaml
 It carries per-tier autoscaling (latency-sensitive tiers keep a warm replica), GPU pool
 placement, tensor parallelism, prefix caching, quantization, and Multi-LoRA settings.
 
+### Optimization variants
+
+Quantization formats and speculative decoding are declared in the catalog as variants of one
+immutable base revision, and each is an experiment until it is measured:
+
+- In `development` a variant is rendered into `config/ray-serve.yaml` under `experiments`, as its
+  own application beside the base model with no warm replica, so it can be benchmarked on the
+  same hardware without taking traffic.
+- It cannot reach `staging` or `production` without a baseline and a variant benchmark, and the
+  catalog refuses to load if the two runs differ in dataset, workload, hardware, or concurrency:
+  a delta only means something when nothing else changed.
+- Quality is never traded for speed. A loss beyond the variant's tolerance blocks promotion
+  however large the gain. Speculative decoding must also actually be faster, since low
+  draft-token acceptance adds overhead; a quantized variant must show the GPU memory it was
+  meant to save.
+- Once in `production` its settings are written into the base model's engine arguments, and the
+  cache identity changes so no response from before the promotion is reused.
+
+`GET /v1/registry/variants` returns every variant with its quality, latency, throughput, memory,
+and GPU-second deltas and each regression, or `null` where nothing has been measured.
+
+Produce the evidence by running a committed dataset against the base model and against the
+experiment, then committing both records under `benchmarks:`:
+
+```bash
+python -m llm_router.evaluation --base-url http://127.0.0.1:8001   --model general-local--general-gptq --model-revision mock-general@sha256:dev   --dataset benchmarks/datasets/extraction-v1.jsonl --dataset-version extraction-v1   --benchmark-id general-gptq-extraction --hardware nvidia-a10g --task extraction
+```
+
+It prints a catalog benchmark record, including GPU memory and draft-token acceptance when the
+engine publishes them. Requests run one at a time, so use the k6 workloads for behaviour under
+load. **Neither committed variant has been measured:** both sit in `development` with no
+evidence, and no claim is made about what either gains.
+
 ## Deployment topology
 
 [`deploy/kubernetes`](deploy/kubernetes) holds the namespaced manifests: gateway
@@ -177,6 +210,7 @@ be served. A request can never introduce a model path, revision, or adapter.
 | `GET /v1/registry/models/{id}` | Full model card with its benchmark evidence. |
 | `GET /v1/registry/adapters` | Promoted LoRA and QLoRA adapters. |
 | `GET /v1/registry/deployments` | Deployment revisions and rollback targets. |
+| `GET /v1/registry/variants` | Optimization variants with their measured deltas. |
 
 Send `routing.domain` to request a domain adapter; the router applies the promoted adapter
 with the largest measured quality gain for that base revision and task, or none at all.

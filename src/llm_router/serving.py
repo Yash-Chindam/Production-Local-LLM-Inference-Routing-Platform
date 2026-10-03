@@ -9,7 +9,14 @@ from typing import Any
 
 import yaml
 
-from llm_router.registry import LifecycleStage, ModelCard, Quantization, Registry
+from llm_router.registry import (
+    EngineVariant,
+    LifecycleStage,
+    ModelCard,
+    Quantization,
+    Registry,
+    VariantKind,
+)
 
 DEFAULT_MIN_REPLICAS = 1
 DEFAULT_MAX_REPLICAS = 4
@@ -31,6 +38,46 @@ def _autoscaling_config(card: ModelCard) -> dict[str, Any]:
         "target_ongoing_requests": DEFAULT_TARGET_ONGOING_REQUESTS,
         "upscale_delay_s": 10,
         "downscale_delay_s": 300 if warm else 60,
+    }
+
+
+def _apply_variant(engine: dict[str, Any], variant: EngineVariant, registry: Registry) -> None:
+    """Write one optimization variant into a set of engine arguments."""
+
+    if variant.kind is VariantKind.QUANTIZATION and variant.quantization is not None:
+        engine["quantization"] = variant.quantization.value
+        return
+    draft = registry.model_card(variant.draft_model_id or "")
+    engine["speculative_config"] = {
+        "model": f"registry://{draft.id}@{draft.revision}",
+        "num_speculative_tokens": variant.num_speculative_tokens,
+    }
+
+
+def _experiment(registry: Registry, variant: EngineVariant) -> dict[str, Any]:
+    """Render a variant under measurement as its own, never-warm application.
+
+    An experiment is served beside its base model rather than in place of it,
+    so it can be benchmarked on the same hardware without taking traffic.
+    """
+
+    card = registry.model_card(variant.base_model_id)
+    engine = _engine_kwargs(card, 0)
+    _apply_variant(engine, variant, registry)
+    return {
+        "model_id": f"{card.id}--{variant.id}",
+        "base_model_id": card.id,
+        "model_revision": card.revision,
+        "variant": variant.id,
+        "kind": variant.kind.value,
+        "stage": variant.stage.value,
+        "has_evidence": variant.has_evidence,
+        "accelerator_type": card.hardware.accelerator,
+        "deployment_config": {
+            "autoscaling_config": {"min_replicas": 0, "max_replicas": 1},
+            "ray_actor_options": {"num_gpus": card.hardware.count},
+        },
+        "engine_kwargs": engine,
     }
 
 
@@ -82,6 +129,11 @@ def build_serving_config(registry: Registry) -> dict[str, Any]:
             },
             "engine_kwargs": _engine_kwargs(card, len(adapters)),
         }
+        promoted = registry.promoted_variants(card.id, card.revision)
+        for variant in promoted:
+            _apply_variant(entry["engine_kwargs"], variant, registry)
+        if promoted:
+            entry["variants"] = [variant.id for variant in promoted]
         if adapters:
             entry["lora_config"] = {
                 "dynamic_lora_loading_path": f"registry://adapters/{card.id}",
@@ -101,10 +153,19 @@ def build_serving_config(registry: Registry) -> dict[str, Any]:
     if not applications:
         raise ServingConfigError("catalog contains no servable local models")
 
-    return {
+    config: dict[str, Any] = {
         "policy_version": registry.policy.version,
         "applications": applications,
     }
+    served = {str(entry["model_id"]) for entry in applications}
+    experiments = [
+        _experiment(registry, variant)
+        for variant in registry.experimental_variants()
+        if variant.base_model_id in served
+    ]
+    if experiments:
+        config["experiments"] = experiments
+    return config
 
 
 def canary_config(registry: Registry, deployment_id: str) -> dict[str, Any]:

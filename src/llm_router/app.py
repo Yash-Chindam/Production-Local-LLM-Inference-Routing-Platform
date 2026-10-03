@@ -347,6 +347,27 @@ def create_app(
             "data": [adapter.model_dump(mode="json") for adapter in catalog.servable_adapters()],
         }
 
+    @app.get("/v1/registry/variants", dependencies=[Depends(authenticate)])
+    async def variants() -> dict[str, object]:
+        """Every optimization variant with its measured delta, or none yet."""
+
+        if catalog is None:
+            return {"object": "list", "data": []}
+        data: list[dict[str, object]] = []
+        for variant in catalog.variants:
+            verdict = catalog.variant_verdict(variant)
+            data.append(
+                {
+                    **variant.model_dump(mode="json"),
+                    "verdict": (
+                        None
+                        if verdict is None
+                        else {**verdict.model_dump(mode="json"), "accepted": verdict.accepted}
+                    ),
+                }
+            )
+        return {"object": "list", "data": data}
+
     @app.get("/v1/registry/deployments", dependencies=[Depends(authenticate)])
     async def deployments() -> dict[str, object]:
         if catalog is None:
