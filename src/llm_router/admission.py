@@ -17,17 +17,51 @@ class AdmissionController:
     def __init__(self, max_concurrency: int, timeout_seconds: float) -> None:
         self._semaphore = asyncio.Semaphore(max_concurrency)
         self._timeout_seconds = timeout_seconds
+        self._in_flight = 0
+        self._idle = asyncio.Event()
+        self._idle.set()
 
-    @asynccontextmanager
-    async def slot(self) -> AsyncIterator[None]:
+    @property
+    def in_flight(self) -> int:
+        return self._in_flight
+
+    async def acquire(self) -> None:
+        """Take a slot, or refuse once the bounded wait has run out.
+
+        A streamed response outlives the handler that admitted it, so it
+        holds its slot through `acquire` and `release` rather than a block
+        that would end, and free the slot, before generation began.
+        """
+
         try:
             await asyncio.wait_for(self._semaphore.acquire(), timeout=self._timeout_seconds)
         except TimeoutError as error:
             raise AdmissionRejectedError("inference capacity is saturated") from error
+        self._in_flight += 1
+        self._idle.clear()
+
+    def release(self) -> None:
+        self._in_flight -= 1
+        if self._in_flight == 0:
+            self._idle.set()
+        self._semaphore.release()
+
+    @asynccontextmanager
+    async def slot(self) -> AsyncIterator[None]:
+        await self.acquire()
         try:
             yield
         finally:
-            self._semaphore.release()
+            self.release()
+
+    async def drain(self, timeout_seconds: float) -> bool:
+        """Wait for admitted work to finish; False if the grace period ran out."""
+
+        try:
+            await asyncio.wait_for(self._idle.wait(), timeout=timeout_seconds)
+        except TimeoutError:
+            return False
+        return True
 
 
 class SlidingWindowQuota:

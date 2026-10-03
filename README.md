@@ -215,6 +215,29 @@ be served. A request can never introduce a model path, revision, or adapter.
 Send `routing.domain` to request a domain adapter; the router applies the promoted adapter
 with the largest measured quality gain for that base revision and task, or none at all.
 
+## Failure behaviour
+
+| Condition | What the gateway does |
+|---|---|
+| Capacity saturated | `503` `overloaded` after the bounded admission wait, with `Retry-After: 1`. A streamed response holds its slot until the stream ends, so streaming cannot escape the concurrency bound. |
+| GPU out of memory | `503` `engine_out_of_memory`, `Retry-After: 10`. The same request at the same size will fail again, so the message says to shorten the prompt or lower `max_tokens`. Counts toward the circuit. |
+| Node lost or engine unreachable | `502` `backend_unavailable` for each of the first `ROUTER_ENGINE_FAILURE_THRESHOLD` consecutive failures; then the circuit opens. |
+| Circuit open | `503` `engine_unavailable` immediately, without contacting the engine, with `Retry-After` set to the remaining cooldown. `/readyz` fails, so the orchestrator stops routing here. |
+| Engine recovers | A healthy probe ends the cooldown early and lets exactly one trial request through. Only that request succeeding closes the circuit; if it fails, the cooldown restarts. |
+| Shutdown | `/readyz` fails first, then admitted requests get `ROUTER_SHUTDOWN_GRACE_SECONDS` to finish before the engine client closes. Keep it under the pod's `terminationGracePeriodSeconds` (60). |
+
+An engine error body is inspected for an out-of-memory report and then discarded, never forwarded:
+it can echo the prompt it rejected. `router_engine_circuit_open` reports 0 closed, 0.5 half-open,
+1 open.
+
+A request that fails is not retried on another model. Every local model shares the one engine a
+gateway faces, so a retry would meet the same failure; the caller is told when to come back.
+
+Cold start is measured, not assumed (see `router_model_load_seconds` below). Tiers that keep a
+warm replica never pay it on the request path. The high-capability tier scales to zero, so its
+first request after an idle period waits for a full model load: budget for it, or raise its
+`min_replicas`.
+
 ## Tenants
 
 What a caller may use is governance and lives in the catalog; the credential that proves which
@@ -380,6 +403,9 @@ All settings use the `ROUTER_` prefix.
 | `ROUTER_BACKEND` | `mock` | `mock` or `vllm`. |
 | `ROUTER_VLLM_BASE_URL` | `http://127.0.0.1:8001` | vLLM OpenAI-compatible endpoint. |
 | `ROUTER_BACKEND_TIMEOUT_SECONDS` | `60` | Per-request engine timeout. |
+| `ROUTER_ENGINE_FAILURE_THRESHOLD` | `5` | Consecutive engine failures before the circuit opens. |
+| `ROUTER_ENGINE_COOLDOWN_SECONDS` | `30` | How long the circuit stays open before a trial request. |
+| `ROUTER_SHUTDOWN_GRACE_SECONDS` | `20` | How long shutdown waits for admitted requests. |
 | `ROUTER_REGISTRY_PATH` | `config/registry.yaml` | Governed model catalog; built-in profiles are used if absent. |
 | `ROUTER_ROUTING_POLICY_VERSION` | `v1` | Invalidates router and response caches when changed. |
 | `ROUTER_CACHE_ENABLED` | `true` | Master switch for all cache tiers. |

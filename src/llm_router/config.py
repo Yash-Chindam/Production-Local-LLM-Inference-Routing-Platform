@@ -24,6 +24,13 @@ class Settings(BaseSettings):
     backend: Literal["mock", "vllm"] = "mock"
     vllm_base_url: str = "http://127.0.0.1:8001"
     backend_timeout_seconds: float = Field(default=60.0, gt=0)
+    # Consecutive engine failures before requests fail fast, and how long
+    # the gateway waits before letting a trial request through again.
+    engine_failure_threshold: int = Field(default=5, ge=1)
+    engine_cooldown_seconds: float = Field(default=30.0, gt=0)
+    # How long shutdown waits for admitted requests before closing the engine
+    # client; keep it under the pod's termination grace period.
+    shutdown_grace_seconds: float = Field(default=20.0, ge=0)
     registry_path: str = "config/registry.yaml"
     routing_policy_version: str = "v1"
     # Labelled prompts the task and complexity classifier is trained on at

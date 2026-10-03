@@ -129,6 +129,12 @@ class Metrics:
             buckets=LATENCY_BUCKETS,
             registry=self.registry,
         )
+        self.engine_circuit_open = Gauge(
+            "router_engine_circuit_open",
+            "Engine circuit state: 0 closed, 0.5 half-open, 1 open.",
+            ["engine"],
+            registry=self.registry,
+        )
         self.engine_running_requests = Gauge(
             "router_engine_running_requests",
             "Requests the engine is currently decoding, which is its live batch size.",
@@ -236,6 +242,10 @@ class Metrics:
         self.quality_prediction_error.labels(model=model, signal="structured_validity").observe(
             abs(decision.profile.quality - observed)
         )
+
+    def record_circuit_state(self, state: str, *, engine: str) -> None:
+        value = {"closed": 0.0, "half-open": 0.5, "open": 1.0}[state]
+        self.engine_circuit_open.labels(engine=engine).set(value)
 
     def record_model_load(self, model: str, seconds: float) -> None:
         """Record a measured cold start, from first unready observation to ready."""

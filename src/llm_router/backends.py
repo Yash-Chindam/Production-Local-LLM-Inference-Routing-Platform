@@ -19,6 +19,28 @@ class BackendUnavailableError(RuntimeError):
     """Raised when an inference engine is unreachable or returns an error."""
 
 
+class BackendOutOfMemoryError(BackendUnavailableError):
+    """Raised when the engine reports it ran out of GPU memory for a request."""
+
+
+OUT_OF_MEMORY_MARKERS = ("out of memory", "outofmemoryerror", "cuda oom")
+
+
+def engine_failure(status_code: int, body: str, context: str) -> BackendUnavailableError:
+    """Classify an engine error response without repeating what it said.
+
+    The body is inspected for an out-of-memory report and then discarded: an
+    engine error can echo the prompt it rejected, so it is never forwarded.
+    """
+
+    if any(marker in body.lower() for marker in OUT_OF_MEMORY_MARKERS):
+        return BackendOutOfMemoryError(
+            f"inference engine ran out of GPU memory {context}; "
+            "retry with a shorter prompt or a smaller max_tokens"
+        )
+    return BackendUnavailableError(f"inference engine returned {status_code} {context}")
+
+
 @dataclass(frozen=True)
 class BackendResult:
     text: str
@@ -103,9 +125,8 @@ class VLLMBackend:
             raise BackendUnavailableError(f"inference engine unreachable: {error}") from error
 
         if response.status_code >= 400:
-            raise BackendUnavailableError(
-                f"inference engine returned {response.status_code} for "
-                f"{served_model_name(decision)}"
+            raise engine_failure(
+                response.status_code, response.text, f"for {served_model_name(decision)}"
             )
 
         body = response.json()
@@ -133,9 +154,8 @@ class VLLMBackend:
                 timeout=self.request_timeout_seconds,
             ) as response:
                 if response.status_code >= 400:
-                    raise BackendUnavailableError(
-                        f"inference engine returned {response.status_code} while streaming"
-                    )
+                    body = (await response.aread()).decode(errors="replace")
+                    raise engine_failure(response.status_code, body, "while streaming")
                 async for line in response.aiter_lines():
                     delta = _parse_stream_line(line)
                     if delta:
