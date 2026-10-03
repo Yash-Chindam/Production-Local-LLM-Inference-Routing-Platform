@@ -40,6 +40,7 @@ from llm_router.caching import (
     exact_cache_eligible,
     semantic_cache_eligible,
 )
+from llm_router.canary import CanaryMonitor, canary_plans
 from llm_router.classifier import TaskClassifier, load_classifier
 from llm_router.config import Settings, get_settings
 from llm_router.engine_stats import ColdStartTracker, EngineStatsCollector
@@ -125,12 +126,15 @@ def create_app(
         catalog.policy.version if catalog is not None else runtime_settings.routing_policy_version
     )
     load = LoadTracker()
+    plans = canary_plans(catalog) if catalog is not None else ()
+    canary = CanaryMonitor(plans)
     router = Router(
         profiles=profiles,
         external_fallback_enabled=runtime_settings.external_fallback_enabled,
         registry=catalog,
         classifier=_load_task_classifier(runtime_settings.task_classifier_path),
         load=load,
+        canary=canary,
     )
     admission = AdmissionController(
         runtime_settings.max_concurrency,
@@ -400,6 +404,23 @@ def create_app(
             )
         return {"object": "list", "data": data}
 
+    @app.get("/v1/registry/canaries", dependencies=[Depends(authenticate)])
+    async def canaries() -> dict[str, object]:
+        """Every canary plan by track, with live state for the adapter track."""
+
+        return {
+            "object": "list",
+            "data": [
+                {
+                    **plan.model_dump(mode="json"),
+                    "live": (
+                        canary.status(plan.subject) if plan.subject in canary.subjects else None
+                    ),
+                }
+                for plan in plans
+            ],
+        }
+
     @app.get("/v1/registry/deployments", dependencies=[Depends(authenticate)])
     async def deployments() -> dict[str, object]:
         if catalog is None:
@@ -496,7 +517,9 @@ def create_app(
         decision: RouteDecision,
         result: BackendResult,
     ) -> None:
-        if not runtime_settings.cache_enabled:
+        # A canary's responses are never cached: if it is rolled back, nothing
+        # it produced may keep being served from the cache afterwards.
+        if not runtime_settings.cache_enabled or decision.canary_arm == "canary":
             return
         entry = CachedCompletion(
             text=result.text,
@@ -512,6 +535,25 @@ def create_app(
         ):
             scope = semantic_cache.scope(payload, tenant=tenant, model_revision=catalog_version)
             semantic_cache.store(scope, prompt, entry)
+
+    def _record_canary(
+        decision: RouteDecision, *, ok: bool, started: float, quality: float | None = None
+    ) -> None:
+        """Feed a canaried route's outcome to the monitor, suspending on failure."""
+
+        if decision.canary_subject is None or decision.canary_arm is None:
+            return
+        on_canary = decision.canary_arm == "canary"
+        telemetry.record_canary(decision.canary_subject, arm=decision.canary_arm, ok=ok)
+        verdict = canary.record(
+            decision.canary_subject,
+            canary=on_canary,
+            ok=ok,
+            latency_ms=(time.perf_counter() - started) * 1000,
+            quality=quality,
+        )
+        if verdict is not None and verdict.action == "rollback":
+            telemetry.record_canary_rollback(decision.canary_subject)
 
     async def _consume_quota(subject: str, tenant: TenantRecord | None) -> None:
         # A tenant may carry its own limit; absent one the platform default
@@ -608,8 +650,12 @@ def create_app(
             prompt_tokens = max(1, len(prompt) // 4)
             completion_tokens = max(1, len(text) // 4)
             span.set_usage(prompt_tokens=prompt_tokens, completion_tokens=completion_tokens)
+            validity: float | None = None
             if payload.routing.structured:
-                telemetry.record_structured_output(decision, valid=structured_output_valid(text))
+                valid = structured_output_valid(text)
+                validity = 1.0 if valid else 0.0
+                telemetry.record_structured_output(decision, valid=valid)
+            _record_canary(decision, ok=True, started=started, quality=validity)
             telemetry.record_completion(
                 decision,
                 latency_seconds=time.perf_counter() - started,
@@ -629,6 +675,8 @@ def create_app(
             )
         except Exception as error:
             span.fail(error)
+            if isinstance(error, BackendUnavailableError):
+                _record_canary(decision, ok=False, started=started)
             raise
         finally:
             lease.close()
@@ -731,6 +779,7 @@ def create_app(
                 tenant.allow_external_fallback is not False if tenant is not None else True
             ),
             privacy_raised_from=privacy_raised_from,
+            canary_key=f"{subject}|{prompt}",
         )
         span.set_route(decision)
         if runtime_settings.cache_enabled:
@@ -779,6 +828,9 @@ def create_app(
 
         try:
             result = await inference_backend.generate(payload, decision)
+        except BackendUnavailableError:
+            _record_canary(decision, ok=False, started=started)
+            raise
         finally:
             telemetry.inflight_requests.dec()
             admission.release()
@@ -786,8 +838,12 @@ def create_app(
         span.set_usage(
             prompt_tokens=result.prompt_tokens, completion_tokens=result.completion_tokens
         )
+        validity: float | None = None
         if payload.routing.structured:
-            telemetry.record_structured_output(decision, valid=structured_output_valid(result.text))
+            valid = structured_output_valid(result.text)
+            validity = 1.0 if valid else 0.0
+            telemetry.record_structured_output(decision, valid=valid)
+        _record_canary(decision, ok=True, started=started, quality=validity)
         telemetry.record_completion(
             decision,
             latency_seconds=time.perf_counter() - started,
@@ -827,6 +883,7 @@ def create_app(
                 "task_source": decision.task_source,
                 "task_confidence": decision.task_confidence,
                 "complexity": decision.complexity,
+                "canary_arm": decision.canary_arm,
                 "reason": decision.reason,
                 "score": decision.score,
                 "candidate_count": decision.candidate_count,

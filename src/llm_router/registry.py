@@ -272,6 +272,32 @@ class RoutePolicy(BaseModel):
     quality_floor: float = Field(default=0.0, ge=0.0, le=1.0)
     resource_ceiling: float = Field(default=10.0, gt=0.0)
     fallback_order: tuple[str, ...] = ()
+    # The version this policy replaced, kept so a policy canary has
+    # something to roll back to.
+    previous_version: str | None = None
+    canary_traffic_percent: int = Field(default=10, ge=1, le=100)
+    canary_min_requests: int = Field(default=500, ge=1)
+    canary_max_error_rate: float = Field(default=0.01, ge=0.0, le=1.0)
+    # How far below a model's benchmarked quality a canary may fall.
+    canary_quality_tolerance: float = Field(default=0.05, ge=0.0, le=1.0)
+    # p95 latency objective per tier; a canary is held to the strictest
+    # objective among the models it serves.
+    latency_objectives_ms: dict[ModelTier, float] = Field(
+        default_factory=lambda: {
+            ModelTier.SMALL_SPECIALIST: 1500.0,
+            ModelTier.GENERAL_LOCAL: 4000.0,
+            ModelTier.HIGH_CAPABILITY: 12000.0,
+            ModelTier.EXTERNAL_FALLBACK: 12000.0,
+        }
+    )
+
+    @model_validator(mode="after")
+    def cover_every_tier_with_an_objective(self) -> "RoutePolicy":
+        missing = set(ModelTier) - set(self.latency_objectives_ms)
+        if missing:
+            names = ", ".join(sorted(tier.value for tier in missing))
+            raise ValueError(f"latency objectives are missing for: {names}")
+        return self
 
 
 class RegistryError(RuntimeError):
@@ -504,9 +530,19 @@ class Registry(BaseModel):
         )
 
     def select_adapter(
-        self, *, model_id: str, revision: str, domain: str | None, task: TaskClass
+        self,
+        *,
+        model_id: str,
+        revision: str,
+        domain: str | None,
+        task: TaskClass,
+        stage: LifecycleStage | None = None,
     ) -> AdapterProfile | None:
-        """Pick the best-scoring approved adapter for a base revision and domain."""
+        """Pick the best-scoring approved adapter for a base revision and domain.
+
+        A stage narrows the choice to that stage, which is how routing keeps
+        the production adapter and its staged canary apart.
+        """
 
         if domain is None:
             return None
@@ -517,6 +553,7 @@ class Registry(BaseModel):
             and adapter.base_revision == revision
             and adapter.domain == domain
             and task in adapter.intended_tasks
+            and (stage is None or adapter.stage is stage)
         ]
         if not candidates:
             return None

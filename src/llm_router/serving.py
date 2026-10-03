@@ -11,7 +11,6 @@ import yaml
 
 from llm_router.registry import (
     EngineVariant,
-    LifecycleStage,
     ModelCard,
     Quantization,
     Registry,
@@ -166,35 +165,6 @@ def build_serving_config(registry: Registry) -> dict[str, Any]:
     if experiments:
         config["experiments"] = experiments
     return config
-
-
-def canary_config(registry: Registry, deployment_id: str) -> dict[str, Any]:
-    """Describe a canary and the revision it rolls back to (section 13)."""
-
-    current = next((item for item in registry.deployments if item.id == deployment_id), None)
-    if current is None:
-        raise ServingConfigError(f"unknown deployment {deployment_id}")
-    target = registry.rollback_target(deployment_id)
-    staged_adapters = [
-        adapter.id
-        for adapter in registry.servable_adapters()
-        if adapter.stage is LifecycleStage.STAGING
-    ]
-    return {
-        "deployment_id": current.id,
-        "container_digest": current.container_digest,
-        "gpu_pool": current.gpu_pool,
-        "canary_traffic_percent": 10,
-        "promote_after_successful_requests": 500,
-        "rollback_to": None if target is None else target.id,
-        "rollback_triggers": [
-            "readiness probe failure",
-            "p95 latency above the tier objective",
-            "quality below the benchmark floor",
-            "error rate above one percent",
-        ],
-        "staged_adapters": sorted(staged_adapters),
-    }
 
 
 def render_serving_config(registry: Registry) -> str:

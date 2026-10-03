@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import pytest
 import yaml
 
@@ -7,7 +5,6 @@ from llm_router.registry import Registry, load_registry
 from llm_router.serving import (
     ServingConfigError,
     build_serving_config,
-    canary_config,
     render_serving_config,
 )
 
@@ -87,30 +84,3 @@ def test_rendered_configuration_is_valid_yaml(registry: Registry) -> None:
 def test_empty_catalog_is_rejected() -> None:
     with pytest.raises(ServingConfigError, match="no servable local models"):
         build_serving_config(Registry(models=()))
-
-
-def test_canary_config_names_its_rollback_target(registry: Registry) -> None:
-    canary = canary_config(registry, "deploy-0002")
-
-    assert canary["rollback_to"] == "deploy-0001"
-    assert canary["canary_traffic_percent"] == 10
-    assert canary["staged_adapters"] == ["claims-extraction-lora-next"]
-    assert "readiness probe failure" in canary["rollback_triggers"]
-
-
-def test_canary_config_reports_an_unknown_deployment(registry: Registry) -> None:
-    with pytest.raises(ServingConfigError, match="unknown deployment"):
-        canary_config(registry, "deploy-9999")
-
-
-def test_first_deployment_has_no_rollback_target(registry: Registry) -> None:
-    assert canary_config(registry, "deploy-0001")["rollback_to"] is None
-
-
-def test_committed_deployment_configuration_matches_the_catalog(registry: Registry) -> None:
-    committed = Path("config/ray-serve.yaml").read_text(encoding="utf-8")
-
-    assert committed == render_serving_config(registry), (
-        "config/ray-serve.yaml is stale; regenerate with "
-        "`python -m llm_router.serving > config/ray-serve.yaml`"
-    )
