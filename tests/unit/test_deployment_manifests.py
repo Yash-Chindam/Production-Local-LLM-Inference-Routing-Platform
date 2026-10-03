@@ -16,6 +16,21 @@ MANIFESTS = sorted(MANIFEST_DIR.glob("*.yaml"))
 SECRET_MARKERS = ("password:", "token:", "apiKey:", "api_key:", "BEGIN PRIVATE KEY")
 
 
+def secret_material(content: str) -> list[str]:
+    """Lines that hold a secret, as opposed to pointing at where one is kept.
+
+    A secret-shaped key may reference the environment, which the secret
+    manager populates. It may never carry a value of its own.
+    """
+
+    found: list[str] = []
+    for line in content.splitlines():
+        for marker in SECRET_MARKERS:
+            if marker in line and not line.split(marker, 1)[1].strip().startswith("os.environ/"):
+                found.append(line.strip())
+    return found
+
+
 def load_documents() -> list[dict[str, Any]]:
     documents: list[dict[str, Any]] = []
     for path in MANIFESTS:
@@ -85,8 +100,7 @@ def test_no_manifest_contains_secret_material() -> None:
     for path in MANIFESTS:
         content = path.read_text(encoding="utf-8")
         assert "kind: Secret\n" not in content
-        for marker in SECRET_MARKERS:
-            assert marker not in content, f"{path.name} contains {marker}"
+        assert secret_material(content) == [], path.name
 
 
 def test_gateway_reads_credentials_from_the_secret_manager() -> None:
@@ -165,3 +179,83 @@ def test_engine_ingress_is_restricted_to_the_gateway() -> None:
 
     sources = policy["spec"]["ingress"][0]["from"]
     assert sources == [{"podSelector": {"matchLabels": {"app.kubernetes.io/name": "llm-gateway"}}}]
+
+
+def test_a_secret_shaped_key_may_reference_the_environment_but_not_hold_a_value() -> None:
+    reference = "          api_key: os.environ/EXTERNAL_PROVIDER_API_KEY"
+    literal = "          api_key: sk-live-not-a-reference"
+
+    assert secret_material(reference) == []
+    assert secret_material("\n".join((reference, literal))) == [literal.strip()]
+    assert secret_material("-----BEGIN PRIVATE KEY-----") == ["-----BEGIN PRIVATE KEY-----"]
+
+
+def test_proxy_configuration_matches_the_committed_litellm_config() -> None:
+    config_map = next(document for document in DOCUMENTS if document["kind"] == "ConfigMap")
+
+    embedded = yaml.safe_load(config_map["data"]["config.yaml"])
+    committed = yaml.safe_load(Path("config/litellm.yaml").read_text(encoding="utf-8"))
+    assert embedded == committed
+
+
+def test_every_external_model_in_the_catalog_has_a_proxy_alias() -> None:
+    catalog = yaml.safe_load(Path("config/registry.yaml").read_text(encoding="utf-8"))
+    proxy = yaml.safe_load(Path("config/litellm.yaml").read_text(encoding="utf-8"))
+
+    external = {model["id"] for model in catalog["models"] if model.get("local") is False}
+    aliases = {entry["model_name"] for entry in proxy["model_list"]}
+    assert external and external == aliases
+
+
+def test_the_proxy_keeps_prompts_out_of_its_logs_and_leaves_retries_to_the_gateway() -> None:
+    proxy = yaml.safe_load(Path("config/litellm.yaml").read_text(encoding="utf-8"))
+
+    assert proxy["litellm_settings"]["turn_off_message_logging"] is True
+    assert proxy["litellm_settings"]["num_retries"] == 0
+    for entry in proxy["model_list"]:
+        assert entry["litellm_params"]["api_key"].startswith("os.environ/")
+
+
+def test_only_the_gateway_reaches_the_proxy_and_only_the_proxy_reaches_out() -> None:
+    policies = {
+        document["metadata"]["name"]: document["spec"]
+        for document in DOCUMENTS
+        if document["kind"] == "NetworkPolicy"
+    }
+    proxy = policies["litellm-proxy"]
+
+    assert proxy["ingress"][0]["from"] == [
+        {"podSelector": {"matchLabels": {"app.kubernetes.io/name": "llm-gateway"}}}
+    ]
+    blocks = [
+        rule["ipBlock"] for entry in proxy["egress"] for rule in entry["to"] if "ipBlock" in rule
+    ]
+    assert blocks == [
+        {"cidr": "0.0.0.0/0", "except": ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]}
+    ]
+    # No other workload has an egress rule that leaves the namespace by address.
+    for name, spec in policies.items():
+        if name == "litellm-proxy":
+            continue
+        for entry in spec.get("egress", []):
+            assert all("ipBlock" not in rule for rule in entry["to"]), name
+    gateway_targets = {
+        rule["podSelector"]["matchLabels"]["app.kubernetes.io/name"]
+        for entry in policies["llm-gateway"]["egress"]
+        for rule in entry["to"]
+    }
+    assert gateway_targets == {"vllm-serve", "redis", "litellm-proxy"}
+
+
+def test_the_proxy_reads_both_of_its_keys_from_the_secret_manager() -> None:
+    external_secret = next(
+        document for document in DOCUMENTS if document["kind"] == "ExternalSecret"
+    )
+    proxy = next(
+        document for document in WORKLOADS if document["metadata"]["name"] == "litellm-proxy"
+    )
+    provided = {item["secretKey"] for item in external_secret["spec"]["data"]}
+
+    for variable in pod_spec(proxy)["containers"][0]["env"]:
+        assert "value" not in variable
+        assert variable["valueFrom"]["secretKeyRef"]["key"] in provided

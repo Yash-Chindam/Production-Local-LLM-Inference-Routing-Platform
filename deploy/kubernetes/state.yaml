@@ -86,3 +86,7 @@ spec:
       remoteRef:
         key: llm-routing/gateway
         property: external_provider_key
+    - secretKey: external-proxy-key
+      remoteRef:
+        key: llm-routing/gateway
+        property: external_proxy_key

@@ -8,4 +8,5 @@ resources:
   - vllm-serve.yaml
   - state.yaml
   - network-policy.yaml
+  - external-provider.yaml
   - observability.yaml

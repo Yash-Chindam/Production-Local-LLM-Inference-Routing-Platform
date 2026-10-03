@@ -132,6 +132,7 @@ class Router:
         tenant_allows_external: bool = True,
         privacy_raised_from: PrivacyClass | None = None,
         canary_key: str = "",
+        fallback_from: str | None = None,
     ) -> RouteDecision:
         prediction = (
             self.classifier.predict(request.prompt) if self.classifier is not None else None
@@ -171,6 +172,9 @@ class Router:
             # A tenant entitlement is a hard restriction, like privacy: it is
             # applied before scoring and can never be outscored.
             and (permitted_models is None or profile.id in permitted_models)
+            # A fallback leaves the engine that just failed: every local
+            # model shares it, so only a model served elsewhere can help.
+            and (fallback_from is None or not profile.local)
         ]
 
         if request.model != "auto":
@@ -247,6 +251,8 @@ class Router:
                 f"; applied adapter {adapter.id} for domain {adapter.domain} "
                 f"(measured quality delta {adapter.benchmark.quality_delta:+.3f})"
             )
+        if fallback_from is not None:
+            reason += f"; fell back from {fallback_from} after the local engine failed"
         if canary_arm == "canary":
             reason += f"; canary arm of {canary_subject}"
         elif canary_arm == "stable":

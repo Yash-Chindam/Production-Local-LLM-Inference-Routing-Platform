@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     admission_timeout_seconds: float = Field(default=0.25, gt=0)
     quota_requests_per_minute: int = Field(default=120, ge=1)
     external_fallback_enabled: bool = False
+    # The LiteLLM proxy that normalizes approved external providers. Provider
+    # credentials live in the proxy; this key only authenticates to it.
+    external_base_url: str = ""
+    external_api_key: str = ""
     backend: Literal["mock", "vllm"] = "mock"
     vllm_base_url: str = "http://127.0.0.1:8001"
     backend_timeout_seconds: float = Field(default=60.0, gt=0)
@@ -52,6 +56,15 @@ class Settings(BaseSettings):
     def reject_development_key_in_shared_environments(self) -> "Settings":
         if self.environment not in {"development", "test"} and "dev-key" in self.accepted_api_keys:
             raise ValueError("ROUTER_API_KEYS must be set outside development and test")
+        return self
+
+    @model_validator(mode="after")
+    def require_a_provider_before_enabling_external_fallback(self) -> "Settings":
+        if self.backend == "vllm" and self.external_fallback_enabled and not self.external_base_url:
+            raise ValueError(
+                "ROUTER_EXTERNAL_BASE_URL must be set when external fallback is enabled; "
+                "without it an external route has nowhere to go"
+            )
         return self
 
     @property

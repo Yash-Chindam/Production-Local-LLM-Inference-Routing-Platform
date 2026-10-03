@@ -1,0 +1,25 @@
+# LiteLLM proxy configuration: the one place an approved external provider is
+# named. The gateway reaches providers only through this proxy, so provider
+# credentials never enter the gateway and adding a provider never changes it.
+#
+# Every alias under model_list must match a non-local model card in
+# config/registry.yaml; a test enforces it. Keys are read from the environment,
+# which the cluster secret manager populates. Nothing secret is committed here.
+model_list:
+  - model_name: approved-external-fallback
+    litellm_params:
+      model: anthropic/claude-sonnet-5-5
+      api_key: os.environ/EXTERNAL_PROVIDER_API_KEY
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+
+litellm_settings:
+  # Only public requests may reach this proxy, but prompts are still kept out
+  # of its logs: the gateway's redacted traces are the record of a request.
+  turn_off_message_logging: true
+  # The gateway owns retries and fallback, so a failure is reported once
+  # rather than retried here and again upstream.
+  num_retries: 0
+  request_timeout: 60
+  drop_params: true

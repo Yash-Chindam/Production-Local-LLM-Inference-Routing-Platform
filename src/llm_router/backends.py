@@ -12,7 +12,7 @@ from typing import Any, Protocol
 
 import httpx
 
-from llm_router.models import ChatCompletionRequest, RouteDecision
+from llm_router.models import ChatCompletionRequest, PrivacyClass, RouteDecision
 
 
 class BackendUnavailableError(RuntimeError):
@@ -100,6 +100,14 @@ class VLLMBackend:
     base_url: str
     client: httpx.AsyncClient
     request_timeout_seconds: float = 60.0
+    # The same OpenAI-compatible client reaches the LiteLLM proxy that fronts
+    # external providers, which authenticates and has its own health path.
+    api_key: str = ""
+    health_path: str = "/health"
+
+    @property
+    def _headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
 
     def _payload(
         self, request: ChatCompletionRequest, decision: RouteDecision, *, stream: bool
@@ -119,6 +127,7 @@ class VLLMBackend:
             response = await self.client.post(
                 f"{self.base_url}/v1/chat/completions",
                 json=self._payload(request, decision, stream=False),
+                headers=self._headers,
                 timeout=self.request_timeout_seconds,
             )
         except httpx.HTTPError as error:
@@ -151,6 +160,7 @@ class VLLMBackend:
                 "POST",
                 f"{self.base_url}/v1/chat/completions",
                 json=payload,
+                headers=self._headers,
                 timeout=self.request_timeout_seconds,
             ) as response:
                 if response.status_code >= 400:
@@ -165,10 +175,57 @@ class VLLMBackend:
 
     async def healthy(self) -> bool:
         try:
-            response = await self.client.get(f"{self.base_url}/health", timeout=2.0)
+            response = await self.client.get(
+                f"{self.base_url}{self.health_path}", headers=self._headers, timeout=2.0
+            )
         except httpx.HTTPError:
             return False
         return response.status_code < 400
+
+
+class ExternalDispatchRefusedError(RuntimeError):
+    """Raised when a non-public request reaches the external dispatch boundary."""
+
+
+@dataclass
+class DispatchingBackend:
+    """Sends each decision to the local engine or the external provider proxy.
+
+    Routing already refuses to pick an external model for private or
+    restricted data. The same rule is enforced again here, at the last point
+    before a prompt could leave the private environment, so a routing defect
+    cannot become a disclosure.
+    """
+
+    local: InferenceBackend
+    external: InferenceBackend | None = None
+
+    def _target(self, request: ChatCompletionRequest, decision: RouteDecision) -> InferenceBackend:
+        if decision.profile.local:
+            return self.local
+        if request.routing.privacy is not PrivacyClass.PUBLIC:
+            raise ExternalDispatchRefusedError(
+                f"refused to send a {request.routing.privacy.value} request to an external model"
+            )
+        if self.external is None:
+            raise BackendUnavailableError("no external provider is configured")
+        return self.external
+
+    async def generate(
+        self, request: ChatCompletionRequest, decision: RouteDecision
+    ) -> BackendResult:
+        return await self._target(request, decision).generate(request, decision)
+
+    async def stream(
+        self, request: ChatCompletionRequest, decision: RouteDecision
+    ) -> AsyncIterator[str]:
+        async for delta in self._target(request, decision).stream(request, decision):
+            yield delta
+
+    async def healthy(self) -> bool:
+        """Readiness follows the local engine; the external provider is optional."""
+
+        return await self.local.healthy()
 
 
 def _parse_stream_line(line: str) -> str:

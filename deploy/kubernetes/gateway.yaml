@@ -42,6 +42,15 @@ spec:
                 secretKeyRef:
                   name: llm-gateway-credentials
                   key: api-keys
+            # External fallback stays off until an operator enables it; the
+            # proxy address and key are in place so enabling it is one setting.
+            - name: ROUTER_EXTERNAL_BASE_URL
+              value: http://litellm-proxy.llm-routing.svc.cluster.local:4000
+            - name: ROUTER_EXTERNAL_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: llm-gateway-credentials
+                  key: external-proxy-key
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
