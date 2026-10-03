@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
@@ -21,6 +21,7 @@ from llm_router.admission import (
     SlidingWindowQuota,
 )
 from llm_router.backends import (
+    BackendOutOfMemoryError,
     BackendResult,
     BackendUnavailableError,
     InferenceBackend,
@@ -62,6 +63,7 @@ from llm_router.registry import (
     load_registry,
     strictest_privacy,
 )
+from llm_router.resilience import CircuitBreaker, EngineCircuitOpenError, ResilientBackend
 from llm_router.routing import NoEligibleModelError, Router, default_model_profiles
 from llm_router.tracing import RequestSpan, Tracing, build_tracer_provider
 
@@ -144,7 +146,7 @@ def create_app(
     engine_client = (
         httpx.AsyncClient() if backend is None and runtime_settings.backend == "vllm" else None
     )
-    inference_backend: InferenceBackend = backend or (
+    raw_backend: InferenceBackend = backend or (
         VLLMBackend(
             base_url=runtime_settings.vllm_base_url,
             client=engine_client,
@@ -153,6 +155,11 @@ def create_app(
         if engine_client is not None
         else MockInferenceBackend()
     )
+    circuit = CircuitBreaker(
+        failure_threshold=runtime_settings.engine_failure_threshold,
+        cooldown_seconds=runtime_settings.engine_cooldown_seconds,
+    )
+    inference_backend: InferenceBackend = ResilientBackend(raw_backend, circuit)
     telemetry = metrics if metrics is not None else Metrics()
     engine_telemetry = engine_stats or (
         EngineStatsCollector(base_url=runtime_settings.vllm_base_url, client=engine_client)
@@ -193,7 +200,11 @@ def create_app(
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.ready = True
         yield
+        # Readiness fails first so no new traffic arrives, then admitted
+        # requests are given the grace period to finish before the engine
+        # client they depend on is closed underneath them.
         app.state.ready = False
+        await admission.drain(runtime_settings.shutdown_grace_seconds)
         if engine_client is not None:
             await engine_client.aclose()
 
@@ -246,6 +257,26 @@ def create_app(
             content={"error": {"message": str(error), "type": "overloaded"}},
         )
 
+    @app.exception_handler(BackendOutOfMemoryError)
+    async def out_of_memory_handler(_: Request, error: BackendOutOfMemoryError) -> JSONResponse:
+        # Not a retry-as-is condition: the same request at the same size will
+        # fail again, so the message says what to change.
+        telemetry.record_rejection("engine_out_of_memory")
+        return JSONResponse(
+            status_code=503,
+            headers={"Retry-After": "10"},
+            content={"error": {"message": str(error), "type": "engine_out_of_memory"}},
+        )
+
+    @app.exception_handler(EngineCircuitOpenError)
+    async def circuit_handler(_: Request, error: EngineCircuitOpenError) -> JSONResponse:
+        telemetry.record_rejection("engine_unavailable")
+        return JSONResponse(
+            status_code=503,
+            headers={"Retry-After": str(max(1, round(error.retry_after_seconds)))},
+            content={"error": {"message": str(error), "type": "engine_unavailable"}},
+        )
+
     @app.exception_handler(BackendUnavailableError)
     async def backend_handler(_: Request, error: BackendUnavailableError) -> JSONResponse:
         telemetry.record_rejection("backend_unavailable")
@@ -287,6 +318,7 @@ def create_app(
         # Engine and accelerator state is pulled through on scrape so the
         # gateway stays the single scrape target for the whole serving path and
         # no background poller runs when nobody is collecting.
+        telemetry.record_circuit_state(circuit.state, engine=engine_label)
         if engine_telemetry is not None:
             stats = await engine_telemetry.sample()
             if stats is not None:
@@ -513,6 +545,39 @@ def create_app(
         }
         return f"data: {json.dumps(document)}\n\n"
 
+    class _StreamLease:
+        """What a live stream holds until it ends: a slot, a gauge, a span."""
+
+        def __init__(self, span: RequestSpan) -> None:
+            self._span = span
+            self._closed = False
+
+        def close(self) -> None:
+            if self._closed:
+                return
+            self._closed = True
+            telemetry.inflight_requests.dec()
+            admission.release()
+            self._span.end()
+
+    class _LeasedStreamingResponse(StreamingResponse):
+        """Releases the lease even if the body iterator is never started.
+
+        A generator that is never iterated never runs its own cleanup, which
+        happens when the client disconnects before the first chunk. The
+        response is always invoked, so it closes the lease as well.
+        """
+
+        def __init__(self, *args: Any, lease: _StreamLease, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            self._lease = lease
+
+        async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+            try:
+                await super().__call__(scope, receive, send)
+            finally:
+                self._lease.close()
+
     async def _stream_completion(
         payload: ChatCompletionRequest,
         prompt: str,
@@ -522,6 +587,7 @@ def create_app(
         started: float,
         queue_seconds: float,
         span: RequestSpan,
+        lease: "_StreamLease",
     ) -> AsyncIterator[str]:
         completion_id = f"chatcmpl-{uuid.uuid4().hex}"
         created = int(time.time())
@@ -565,7 +631,7 @@ def create_app(
             span.fail(error)
             raise
         finally:
-            span.end()
+            lease.close()
 
     @app.post("/v1/chat/completions", response_model=None)
     async def chat_completions(
@@ -679,36 +745,43 @@ def create_app(
 
         telemetry.queued_requests.inc()
         try:
-            async with admission.slot():
-                telemetry.queued_requests.dec()
-                queue_seconds = time.perf_counter() - started
-                # What this request actually waited becomes the next
-                # request's estimate for the same model.
-                load.observe_queue(decision.profile.id, queue_seconds * 1000)
-                telemetry.inflight_requests.inc()
-                try:
-                    if payload.stream:
-                        span.handed_off = True
-                        return StreamingResponse(
-                            _stream_completion(
-                                payload,
-                                prompt,
-                                cache_key,
-                                subject,
-                                decision,
-                                started,
-                                queue_seconds,
-                                span,
-                            ),
-                            media_type="text/event-stream",
-                            headers=_route_headers(decision, "miss"),
-                        )
-                    result = await inference_backend.generate(payload, decision)
-                finally:
-                    telemetry.inflight_requests.dec()
-        except AdmissionRejectedError:
+            await admission.acquire()
+        finally:
             telemetry.queued_requests.dec()
-            raise
+        queue_seconds = time.perf_counter() - started
+        # What this request actually waited becomes the next request's
+        # estimate for the same model.
+        load.observe_queue(decision.profile.id, queue_seconds * 1000)
+        telemetry.inflight_requests.inc()
+
+        if payload.stream:
+            # The stream holds its admission slot until it ends. Returning it
+            # from inside a slot block would free the slot before generation
+            # began, and streamed work would escape the concurrency bound.
+            lease = _StreamLease(span)
+            span.handed_off = True
+            return _LeasedStreamingResponse(
+                _stream_completion(
+                    payload,
+                    prompt,
+                    cache_key,
+                    subject,
+                    decision,
+                    started,
+                    queue_seconds,
+                    span,
+                    lease,
+                ),
+                lease=lease,
+                media_type="text/event-stream",
+                headers=_route_headers(decision, "miss"),
+            )
+
+        try:
+            result = await inference_backend.generate(payload, decision)
+        finally:
+            telemetry.inflight_requests.dec()
+            admission.release()
 
         span.set_usage(
             prompt_tokens=result.prompt_tokens, completion_tokens=result.completion_tokens
