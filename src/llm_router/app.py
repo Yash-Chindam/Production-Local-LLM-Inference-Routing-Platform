@@ -742,6 +742,8 @@ def create_app(
         queue_seconds: float,
         span: RequestSpan,
         lease: "_StreamLease",
+        first: str | None,
+        deltas: AsyncIterator[str],
     ) -> AsyncIterator[str]:
         completion_id = f"chatcmpl-{uuid.uuid4().hex}"
         created = int(time.time())
@@ -752,9 +754,14 @@ def create_app(
         # ends it whether generation finishes, fails, or the client leaves.
         try:
             yield _chunk(completion_id, created, model_id, delta={"role": "assistant"})
-            async for delta in inference_backend.stream(payload, decision):
-                collected.append(delta)
-                yield _chunk(completion_id, created, model_id, delta={"content": delta})
+            # The first delta was drawn before the response began, so an
+            # engine that fails at the start can still be answered properly.
+            if first is not None:
+                collected.append(first)
+                yield _chunk(completion_id, created, model_id, delta={"content": first})
+                async for delta in deltas:
+                    collected.append(delta)
+                    yield _chunk(completion_id, created, model_id, delta={"content": delta})
             yield _chunk(completion_id, created, model_id, delta={}, finish_reason="stop")
             yield "data: [DONE]\n\n"
 
@@ -919,6 +926,34 @@ def create_app(
             # The stream holds its admission slot until it ends. Returning it
             # from inside a slot block would free the slot before generation
             # began, and streamed work would escape the concurrency bound.
+            #
+            # The first delta is drawn here, before any byte is sent. Until
+            # then the status and route headers are still open, so an engine
+            # that fails at the start gets a real error status or a declared
+            # fallback. Once a token has been sent neither is possible.
+            try:
+                try:
+                    deltas = inference_backend.stream(payload, decision)
+                    first = await anext(deltas, None)
+                except BackendUnavailableError as error:
+                    _record_canary(decision, ok=False, started=started)
+                    fallback = _fallback_route(payload, decision, tenant, privacy_raised_from)
+                    if fallback is None:
+                        raise
+                    telemetry.record_fallback(
+                        from_model=decision.profile.id,
+                        to_model=fallback.profile.id,
+                        cause=type(error).__name__,
+                    )
+                    telemetry.record_route(fallback, privacy=payload.routing.privacy.value)
+                    decision = fallback
+                    span.set_route(decision)
+                    deltas = inference_backend.stream(payload, decision)
+                    first = await anext(deltas, None)
+            except BaseException:
+                telemetry.inflight_requests.dec()
+                admission.release()
+                raise
             lease = _StreamLease(span)
             span.handed_off = True
             return _LeasedStreamingResponse(
@@ -932,6 +967,8 @@ def create_app(
                     queue_seconds,
                     span,
                     lease,
+                    first,
+                    deltas,
                 ),
                 lease=lease,
                 media_type="text/event-stream",

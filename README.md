@@ -148,8 +148,13 @@ An eligible request also falls back when the local engine fails with it: unreach
 memory, or circuit open. The response names the model that answered, its route reason says
 which model it fell back from, and `router_fallbacks_total` counts it by cause. A fallback
 response is cached under the model that produced it. The local engine and the proxy have separate
-circuits, so a failing engine does not close the path to the provider. Streamed requests do not
-fall back; they fail as described under [Failure behaviour](#failure-behaviour).
+circuits, so a failing engine does not close the path to the provider.
+
+A streamed request falls back the same way if the engine fails before its first token: the
+gateway draws that token before it sends anything, so the status and route headers are still
+open. An engine failure at that point with no fallback available is an ordinary error response,
+not a broken stream. After a token has been sent there is no fallback, because one model's
+output is never continued by another.
 
 In the cluster the proxy is the only workload allowed to reach the internet, and only the gateway
 may call it. This path has been tested against a stand-in transport, not against a running
