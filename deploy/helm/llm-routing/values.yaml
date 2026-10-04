@@ -15,6 +15,12 @@ images:
   externalProxy: ghcr.io/berriai/litellm@sha256:REPLACE_ME
   mlflow: ghcr.io/mlflow/mlflow@sha256:REPLACE_ME
 
+# The identity provider whose short-lived tokens the gateway accepts. Its
+# public keys are read from the secret manager, not from this chart.
+auth:
+  issuer: https://identity.REPLACE_ME
+  audience: llm-gateway
+
 gateway:
   # Starting size; the KEDA ScaledObject takes over within the bounds below.
   replicas: 2

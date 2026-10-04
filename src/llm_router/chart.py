@@ -22,6 +22,8 @@ CHART = Path("deploy/helm") / CHART_NAME
 # Applied by the overlay as patches rather than shipped as resources.
 OVERLAY_ONLY = {"kustomization.yaml", "gateway-network-policy.patch.yaml"}
 ENGINE_URL = "http://vllm-serve.llm-routing.svc.cluster.local:8000"
+TOKEN_ISSUER = "https://identity.REPLACE_ME"
+TOKEN_AUDIENCE = "llm-gateway"
 
 IMAGES = {
     "gateway": "ghcr.io/REPLACE_ME/local-llm-router@sha256:REPLACE_ME",
@@ -106,6 +108,13 @@ def _template(document: str, *, source: str) -> str | None:
     if kind == "Deployment" and name == "llm-gateway":
         text = _swap(text, ENGINE_URL, '{{ include "llm-routing.engineUrl" . }}', where=where)
         text = _swap(text, "replicas: 2", "replicas: {{ .Values.gateway.replicas }}", where=where)
+        for literal, value in ((TOKEN_ISSUER, "issuer"), (TOKEN_AUDIENCE, "audience")):
+            text = _swap(
+                text,
+                f"value: {literal}\n",
+                f"value: {{{{ .Values.auth.{value} | quote }}}}\n",
+                where=where,
+            )
     if kind == "NetworkPolicy" and name == "llm-gateway":
         text = _swap(
             text,
@@ -152,6 +161,12 @@ def _values(source_root: Path) -> str:
         "# recorded for the release; a tag alone is refused by the contract tests.",
         "images:",
         *(f"  {key}: {image}" for key, image in IMAGES.items()),
+        "",
+        "# The identity provider whose short-lived tokens the gateway accepts. Its",
+        "# public keys are read from the secret manager, not from this chart.",
+        "auth:",
+        f"  issuer: {TOKEN_ISSUER}",
+        f"  audience: {TOKEN_AUDIENCE}",
         "",
         "gateway:",
         "  # Starting size; the KEDA ScaledObject takes over within the bounds below.",

@@ -117,12 +117,20 @@ def test_gateway_reads_credentials_from_the_secret_manager() -> None:
         document for document in WORKLOADS if document["metadata"]["name"] == "llm-gateway"
     )
     container = pod_spec(gateway)["containers"][0]
-    api_keys = next(item for item in container["env"] if item["name"] == "ROUTER_API_KEYS")
+    environment = {item["name"]: item for item in container["env"]}
+    keys = environment["ROUTER_JWT_JWKS"]
 
-    assert "value" not in api_keys
-    assert (
-        api_keys["valueFrom"]["secretKeyRef"]["name"] == external_secret["spec"]["target"]["name"]
-    )
+    assert "value" not in keys
+    assert keys["valueFrom"]["secretKeyRef"]["name"] == external_secret["spec"]["target"]["name"]
+    # The cluster accepts short-lived tokens only; no static key is mounted.
+    assert environment["ROUTER_REQUIRE_SHORT_LIVED_CREDENTIALS"]["value"] == "true"
+    assert int(environment["ROUTER_JWT_MAX_LIFETIME_SECONDS"]["value"]) <= 3600
+    assert "ROUTER_API_KEYS" not in environment
+    assert "ROUTER_TENANT_KEYS" not in environment
+    provided = {item["secretKey"] for item in external_secret["spec"]["data"]}
+    for variable in container["env"]:
+        if "valueFrom" in variable:
+            assert variable["valueFrom"]["secretKeyRef"]["key"] in provided
 
 
 def test_gateway_probes_target_the_health_and_readiness_endpoints() -> None:

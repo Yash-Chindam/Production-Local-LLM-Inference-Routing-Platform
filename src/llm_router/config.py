@@ -17,6 +17,18 @@ class Settings(BaseSettings):
     # tenant is calling stays in the environment and is never committed.
     tenant_keys: str = ""
     default_tenant: str = "default"
+    # Short-lived credentials: signed tokens from the identity provider,
+    # verified against its published keys. Supply the keys inline as a JWKS
+    # document or name the endpoint to fetch them from, not both.
+    jwt_issuer: str = ""
+    jwt_audience: str = ""
+    jwt_jwks: str = ""
+    jwt_jwks_url: str = ""
+    # A token valid for longer than this is refused however it is signed.
+    jwt_max_lifetime_seconds: int = Field(default=3600, ge=60)
+    jwt_tenant_claim: str = "tenant"
+    # When set, static API keys are not accepted at all.
+    require_short_lived_credentials: bool = False
     max_concurrency: int = Field(default=32, ge=1)
     admission_timeout_seconds: float = Field(default=0.25, gt=0)
     quota_requests_per_minute: int = Field(default=120, ge=1)
@@ -54,8 +66,27 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def reject_development_key_in_shared_environments(self) -> "Settings":
+        if self.require_short_lived_credentials:
+            # Static keys are not accepted, so there is none to get wrong.
+            return self
         if self.environment not in {"development", "test"} and "dev-key" in self.accepted_api_keys:
             raise ValueError("ROUTER_API_KEYS must be set outside development and test")
+        return self
+
+    @model_validator(mode="after")
+    def require_a_complete_token_configuration(self) -> "Settings":
+        if self.require_short_lived_credentials and not self.jwt_issuer:
+            raise ValueError(
+                "ROUTER_JWT_ISSUER must be set when short-lived credentials are required"
+            )
+        if self.jwt_issuer:
+            if not self.jwt_audience:
+                raise ValueError("ROUTER_JWT_AUDIENCE must be set with ROUTER_JWT_ISSUER")
+            if bool(self.jwt_jwks) == bool(self.jwt_jwks_url):
+                raise ValueError(
+                    "set exactly one of ROUTER_JWT_JWKS and ROUTER_JWT_JWKS_URL "
+                    "so the gateway has keys to verify tokens with"
+                )
         return self
 
     @model_validator(mode="after")

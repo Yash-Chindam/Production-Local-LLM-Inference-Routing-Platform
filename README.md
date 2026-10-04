@@ -223,6 +223,7 @@ helm upgrade --install llm-routing deploy/helm/llm-routing \
 |---|---|---|
 | `serving.mode` | `vllm` | `vllm` for one engine, `ray` for the Ray Serve topology below. |
 | `images.*` | digest placeholders | One digest-pinned reference per workload. |
+| `auth.issuer` / `auth.audience` | placeholder / `llm-gateway` | Identity provider whose tokens are accepted. |
 | `gateway.replicas` | `2` | Starting gateway size. |
 | `gateway.autoscaling.minReplicas` / `maxReplicas` | `2` / `20` | KEDA bounds. |
 
@@ -476,6 +477,37 @@ action is not.
 
 Promotion is never automatic on any track. It is a catalog change and goes through review.
 
+## Authentication
+
+Users and services authenticate with short-lived tokens from the organization's identity
+provider. The gateway holds only the issuer's public keys, so it can verify a token and never
+mint one.
+
+A bearer token is accepted when all of these hold:
+
+- It is signed with an asymmetric algorithm by a key the issuer publishes. Unsigned and
+  shared-secret tokens are refused.
+- Its issuer and audience are the configured ones, and it has not expired.
+- It carries `iat`, `exp`, and `sub`, and its lifetime (`exp` minus `iat`) is at most
+  `ROUTER_JWT_MAX_LIFETIME_SECONDS`. A long-lived token is refused however it is signed.
+- It names a tenant in the `ROUTER_JWT_TENANT_CLAIM` claim. There is no default: a token that
+  does not say which tenant it is for does not inherit one.
+
+A refused token gets `401` with the reason, and is never retried as a static key. The tenant in
+the token selects the [entitlement](#tenants) that applies. The caller is identified by issuer
+and subject, so a renewed token is the same caller.
+
+Keys come either inline as a JWKS document (`ROUTER_JWT_JWKS`, from the secret manager) or from
+the issuer's endpoint (`ROUTER_JWT_JWKS_URL`). Fetched keys are cached for five minutes, refetched
+when a token names a key the cache does not hold (at most once every ten seconds), and kept if
+the issuer is unreachable, so a signing-key rotation needs no restart and an issuer outage does
+not become a gateway outage.
+
+Static API keys (`ROUTER_API_KEYS`, `ROUTER_TENANT_KEYS`) remain for local development and are
+accepted until `ROUTER_REQUIRE_SHORT_LIVED_CREDENTIALS=true`. The cluster manifests set it: no
+static key is mounted there at all. The issuer URL in the manifests is a placeholder, and this
+has been tested with locally generated keys, not against a real identity provider.
+
 ## Tenants
 
 What a caller may use is governance and lives in the catalog; the credential that proves which
@@ -630,7 +662,7 @@ All settings use the `ROUTER_` prefix.
 
 | Variable | Default | Purpose |
 |---|---:|---|
-| `ROUTER_API_KEYS` | `dev-key` | Comma-separated bearer tokens. |
+| `ROUTER_API_KEYS` | `dev-key` | Comma-separated static keys, for development. |
 | `ROUTER_MAX_CONCURRENCY` | `32` | Maximum in-flight requests. |
 | `ROUTER_ADMISSION_TIMEOUT_SECONDS` | `0.25` | Time allowed to wait for capacity. |
 | `ROUTER_QUOTA_REQUESTS_PER_MINUTE` | `120` | Per-token sliding-window quota. |
@@ -639,6 +671,12 @@ All settings use the `ROUTER_` prefix.
 | `ROUTER_EXTERNAL_API_KEY` | _(empty)_ | Key the gateway presents to the proxy. |
 | `ROUTER_REDIS_URL` | _(empty)_ | Shared cache and quota state; in-process when empty. |
 | `ROUTER_TENANT_KEYS` | _(empty)_ | `tenant:key` bindings; bare `ROUTER_API_KEYS` keys use the default tenant. |
+| `ROUTER_JWT_ISSUER` | _(empty)_ | Token issuer; enables short-lived credentials when set. |
+| `ROUTER_JWT_AUDIENCE` | _(empty)_ | Audience a token must be issued for. |
+| `ROUTER_JWT_JWKS` / `ROUTER_JWT_JWKS_URL` | _(empty)_ | The issuer's public keys, inline or by endpoint; exactly one. |
+| `ROUTER_JWT_MAX_LIFETIME_SECONDS` | `3600` | Longest token lifetime accepted. |
+| `ROUTER_JWT_TENANT_CLAIM` | `tenant` | Claim that names the caller's tenant. |
+| `ROUTER_REQUIRE_SHORT_LIVED_CREDENTIALS` | `false` | Refuses static API keys entirely. |
 | `ROUTER_OTLP_ENDPOINT` | _(empty)_ | OTLP/HTTP trace collector; tracing is a no-op when empty. |
 | `ROUTER_TRACE_PROMPT_CONTENT` | `false` | Records a bounded prefix of `public` prompts only. |
 | `ROUTER_BACKEND` | `mock` | `mock` or `vllm`. |

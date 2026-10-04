@@ -78,10 +78,10 @@ spec:
   target:
     name: llm-gateway-credentials
   data:
-    - secretKey: api-keys
+    - secretKey: jwt-jwks
       remoteRef:
         key: llm-routing/gateway
-        property: api_keys
+        property: jwt_jwks
     - secretKey: external-provider-key
       remoteRef:
         key: llm-routing/gateway

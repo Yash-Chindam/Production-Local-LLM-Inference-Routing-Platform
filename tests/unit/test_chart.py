@@ -155,6 +155,8 @@ def test_values_reach_the_rendered_workloads() -> None:
         "--set",
         "gateway.replicas=5",
         "--set",
+        "auth.issuer=https://login.example",
+        "--set",
         "gateway.autoscaling.maxReplicas=40",
         namespace="inference",
     )
@@ -163,6 +165,8 @@ def test_values_reach_the_rendered_workloads() -> None:
     environment = {item["name"]: item.get("value") for item in container["env"]}
 
     assert container["image"] == "registry.example/router@sha256:abc"
+    assert environment["ROUTER_JWT_ISSUER"] == "https://login.example"
+    assert environment["ROUTER_JWT_AUDIENCE"] == "llm-gateway"
     assert gateway["spec"]["replicas"] == 5
     assert rendered["ScaledObject", "llm-gateway"]["spec"]["maxReplicaCount"] == 40
     assert environment["ROUTER_VLLM_BASE_URL"] == (
