@@ -62,6 +62,10 @@ jobs:
         run: python -m llm_router.serving > /tmp/ray-serve.yaml && diff -u config/ray-serve.yaml /tmp/ray-serve.yaml
       - name: Verify the Ray topology matches the catalog
         run: python -m llm_router.topology > /tmp/ray-service.yaml && diff -u deploy/overlays/ray/ray-service.yaml /tmp/ray-service.yaml
+      - name: Verify the Helm chart matches the manifests
+        run: python -m llm_router.chart --check && helm lint deploy/helm/llm-routing
+      - name: Package the Helm chart
+        run: helm package deploy/helm/llm-routing --destination chart
       - name: Render the canary and rollback plans
         # One plan per track (model, adapter, policy), each naming what it
         # rolls back to and the criteria that trigger it.
@@ -87,6 +91,7 @@ jobs:
             canary-plan.json
             governance-plan.json
             config/ray-serve.yaml
+            chart
             rendered-base.yaml
             rendered-ray.yaml
             deploy

@@ -211,6 +211,29 @@ kubectl apply -k deploy/kubernetes       # one vLLM engine
 kubectl apply -k deploy/overlays/ray     # Ray Serve across GPU pools
 ```
 
+The same manifests install as a Helm chart, [`deploy/helm/llm-routing`](deploy/helm/llm-routing):
+
+```bash
+helm upgrade --install llm-routing deploy/helm/llm-routing \
+  --namespace llm-routing --create-namespace \
+  --set serving.mode=ray
+```
+
+| Value | Default | Purpose |
+|---|---|---|
+| `serving.mode` | `vllm` | `vllm` for one engine, `ray` for the Ray Serve topology below. |
+| `images.*` | digest placeholders | One digest-pinned reference per workload. |
+| `gateway.replicas` | `2` | Starting gateway size. |
+| `gateway.autoscaling.minReplicas` / `maxReplicas` | `2` / `20` | KEDA bounds. |
+
+The chart is generated from the manifests and never edited by hand; tests check that it renders
+exactly what kustomize renders, in both modes.
+
+```bash
+python -m llm_router.chart            # rebuild after changing a manifest
+python -m llm_router.chart --check    # exit 1 if the committed chart is stale
+```
+
 The base runs a single vLLM engine, which serves one model. The
 [`deploy/overlays/ray`](deploy/overlays/ray) overlay replaces it with a KubeRay `RayService`
 that serves every local model in the catalog behind one OpenAI-compatible endpoint:
@@ -258,7 +281,8 @@ python -m pip install -e ".[redis]"
 CD renders the canary plans (one per track, each with its rollback target) and the governance
 plan, verifies
 `config/ray-serve.yaml` and the Ray topology against the catalog, and validates both rendered
-topologies with kubeconform.
+topologies with kubeconform. It also checks the Helm chart against the manifests, lints it, and
+packages it.
 Applying to a cluster stays disabled until a deployment destination is configured.
 
 ## Model registry
