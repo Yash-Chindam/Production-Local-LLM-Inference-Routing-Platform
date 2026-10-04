@@ -479,9 +479,28 @@ controls that rollout evaluates the plan through the same rule:
 python -m llm_router.canary --plan model:deploy-0002 --observation observed.json --baseline stable.json
 ```
 
-It exits `0` to promote, `2` to hold, and `3` to roll back, and prints the rollback target. No
-rollout controller is wired to it yet, so on those two tracks the decision is automatic and the
-action is not.
+It exits `0` to promote, `2` to hold, and `3` to roll back, and prints the rollback target.
+
+`llm_router.rollout` acts on that verdict, so neither kind of rollback waits for a person:
+
+```bash
+python -m llm_router.rollout deploy --set serving.mode=ray --execute
+python -m llm_router.rollout evaluate --plan model:deploy-0002 \
+  --observation observed.json --baseline stable.json --execute
+```
+
+- **Failed readiness.** `deploy` runs `helm upgrade --install --atomic`: if a workload does not
+  become ready within the timeout, Helm restores the previous release.
+- **Failed canary criteria.** `evaluate` judges the plan and, on a rollback verdict for the model
+  or policy track, runs `helm rollback` to the release that was live before. It exits `4` if that
+  command fails.
+- A plan with no recorded rollback target runs nothing and stops: restoring whatever Helm happens
+  to hold is not a rollback to a known state.
+- Without `--execute` both print the command and change nothing.
+
+The observation is a file you supply: nothing here collects a model or policy canary's metrics
+from Prometheus, and nothing schedules `evaluate`. The Helm commands have been checked against
+`helm` for their flags, not run against a cluster.
 
 Promotion is never automatic on any track. It is a catalog change and goes through review.
 

@@ -72,6 +72,10 @@ jobs:
         # One plan per track (model, adapter, policy), each naming what it
         # rolls back to and the criteria that trigger it.
         run: python -m llm_router.canary > canary-plan.json
+      - name: Render the atomic deploy command
+        # What the deploy step will run once a destination is configured:
+        # an atomic upgrade, which Helm rolls back itself on failed readiness.
+        run: python -m llm_router.rollout deploy > deploy-command.json
       - name: Render the governance plan
         # What a sync would record in MLflow for this catalog: every model and
         # adapter revision, its stage, and its benchmark evidence. Planned
@@ -92,6 +96,7 @@ jobs:
           path: |
             canary-plan.json
             governance-plan.json
+            deploy-command.json
             config/ray-serve.yaml
             chart
             rendered-base.yaml
