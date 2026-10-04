@@ -11,9 +11,18 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     ROUTER_ENVIRONMENT=production
 
-RUN useradd --create-home --uid 10001 appuser
+# Take the distribution's security fixes; the base image tag lags behind them.
+RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --uid 10001 appuser
 COPY --from=builder /wheels /wheels
-RUN python -m pip install --no-cache-dir /wheels/* && rm -rf /wheels
+# The running service never installs anything, so the installer and the
+# libraries it vendors are removed rather than patched.
+RUN python -m pip install --no-cache-dir /wheels/* \
+    && rm -rf /wheels \
+    && python -m pip uninstall -y pip \
+    && rm -rf /usr/local/lib/python3.13/ensurepip
 
 WORKDIR /app
 COPY config ./config

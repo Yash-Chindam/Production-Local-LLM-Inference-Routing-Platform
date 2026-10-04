@@ -79,6 +79,26 @@ jobs:
         with:
           context: .
           push: false
+          load: true
           tags: local-llm-router:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - name: Scan the image for known vulnerabilities
+        # A release image may not carry a critical or high vulnerability that
+        # has a fix. This job gates the merge, and only merges are released.
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: local-llm-router:${{ github.sha }}
+          scanners: vuln
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Start the image and wait for it to answer
+        run: |
+          docker run -d --name smoke -p 8000:8000 -e ROUTER_API_KEYS=smoke local-llm-router:${{ github.sha }}
+          for attempt in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:8000/healthz; then exit 0; fi
+            sleep 1
+          done
+          docker logs smoke
+          exit 1
