@@ -45,6 +45,12 @@ from llm_router.caching import (
 from llm_router.canary import CanaryMonitor, canary_plans
 from llm_router.classifier import TaskClassifier, load_classifier
 from llm_router.config import Settings, get_settings
+from llm_router.credentials import (
+    CredentialError,
+    TokenVerifier,
+    build_verifier,
+    looks_like_a_token,
+)
 from llm_router.engine_stats import ColdStartTracker, EngineStatsCollector
 from llm_router.evaluation import structured_output_valid
 from llm_router.load import LoadTracker
@@ -121,8 +127,17 @@ def create_app(
     redis_client: RedisLike | None = None,
     engine_stats: EngineStatsCollector | None = None,
     tracer_provider: TracerProvider | None = None,
+    token_verifier: TokenVerifier | None = None,
 ) -> FastAPI:
     runtime_settings = settings or get_settings()
+    verifier = token_verifier or build_verifier(
+        issuer=runtime_settings.jwt_issuer,
+        audience=runtime_settings.jwt_audience,
+        jwks=runtime_settings.jwt_jwks,
+        jwks_url=runtime_settings.jwt_jwks_url,
+        max_lifetime_seconds=runtime_settings.jwt_max_lifetime_seconds,
+        tenant_claim=runtime_settings.jwt_tenant_claim,
+    )
     catalog = registry if registry is not None else _load_catalog(runtime_settings.registry_path)
     profiles = catalog.profiles() if catalog is not None else default_model_profiles()
     policy_version = (
@@ -257,6 +272,30 @@ def create_app(
                 headers={"WWW-Authenticate": "Bearer"},
             )
         token = authorization.removeprefix(prefix)
+        if verifier is not None and looks_like_a_token(token):
+            try:
+                verified = await verifier.verify(token)
+            except CredentialError as error:
+                # A token that fails is refused outright; it is never retried
+                # as a static key.
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail=str(error),
+                    headers={"WWW-Authenticate": 'Bearer error="invalid_token"'},
+                ) from error
+            # The subject, not the token, identifies the caller: a renewed
+            # token is the same caller.
+            identity = f"{verifier.issuer}|{verified.subject}"
+            return Principal(
+                tenant_id=verified.tenant_id,
+                credential_fingerprint=hashlib.sha256(identity.encode()).hexdigest(),
+            )
+        if runtime_settings.require_short_lived_credentials:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="a short-lived token is required; static keys are not accepted",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
         # Every candidate is compared so the work does not depend on which
         # credential matched, and the match itself stays constant time.
         matched: str | None = None

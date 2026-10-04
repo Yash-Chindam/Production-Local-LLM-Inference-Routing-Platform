@@ -250,7 +250,7 @@ def test_the_overlay_renders_with_ray_in_place_of_the_single_engine() -> None:
     )
     # Everything the base promised about the gateway is still there.
     assert environment["ROUTER_BACKEND"] == "vllm"
-    assert "ROUTER_API_KEYS" in environment
+    assert "ROUTER_JWT_JWKS" in environment
 
 
 def emitted_metrics() -> set[str]:

@@ -37,11 +37,23 @@ spec:
               value: vllm
             - name: ROUTER_VLLM_BASE_URL
               value: http://vllm-serve.llm-routing.svc.cluster.local:8000
-            - name: ROUTER_API_KEYS
+            # Callers present short-lived tokens from the identity provider.
+            # Static API keys are not accepted in the cluster at all. The
+            # issuer's public keys come from the secret manager, so verifying
+            # a token needs no network path out of the namespace.
+            - name: ROUTER_REQUIRE_SHORT_LIVED_CREDENTIALS
+              value: "true"
+            - name: ROUTER_JWT_ISSUER
+              value: https://identity.REPLACE_ME
+            - name: ROUTER_JWT_AUDIENCE
+              value: llm-gateway
+            - name: ROUTER_JWT_MAX_LIFETIME_SECONDS
+              value: "3600"
+            - name: ROUTER_JWT_JWKS
               valueFrom:
                 secretKeyRef:
                   name: llm-gateway-credentials
-                  key: api-keys
+                  key: jwt-jwks
             # External fallback stays off until an operator enables it; the
             # proxy address and key are in place so enabling it is one setting.
             - name: ROUTER_EXTERNAL_BASE_URL
