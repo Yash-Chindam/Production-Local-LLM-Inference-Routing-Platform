@@ -1,0 +1,25 @@
+# Recipe for the claims extraction adapter. The catalog's base model is a mock,
+# so hf_repo and hf_revision are placeholders to replace with the real base.
+id: claims-extraction-lora
+base_model_id: small-specialist
+base_revision: mock-small@sha256:dev
+hf_repo: REPLACE_ME/small-specialist
+hf_revision: "0000000000000000000000000000000000000000"
+domain: claims
+intended_tasks: [extraction]
+# QLoRA: trained over the base loaded in 4-bit, to fit an L4.
+method: qlora
+framework: unsloth
+rank: 16
+alpha: 32
+dropout: 0.05
+target_modules: [q_proj, k_proj, v_proj, o_proj]
+dataset:
+  path: s3://llm-routing-artifacts/datasets/claims-2026-05.jsonl
+  version: claims-2026-05
+training:
+  epochs: 3
+  learning_rate: 0.0002
+  batch_size: 8
+  max_seq_length: 2048
+  seed: 7

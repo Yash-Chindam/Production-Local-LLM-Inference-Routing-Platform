@@ -1,0 +1,24 @@
+# Recipe for the staged claims adapter: same base, the next dataset version,
+# and full-precision LoRA. hf_repo and hf_revision are placeholders.
+id: claims-extraction-lora-next
+base_model_id: small-specialist
+base_revision: mock-small@sha256:dev
+hf_repo: REPLACE_ME/small-specialist
+hf_revision: "0000000000000000000000000000000000000000"
+domain: claims
+intended_tasks: [extraction]
+method: lora
+framework: peft
+rank: 16
+alpha: 32
+dropout: 0.05
+target_modules: [q_proj, k_proj, v_proj, o_proj]
+dataset:
+  path: s3://llm-routing-artifacts/datasets/claims-2026-06.jsonl
+  version: claims-2026-06
+training:
+  epochs: 3
+  learning_rate: 0.0002
+  batch_size: 8
+  max_seq_length: 2048
+  seed: 7

@@ -1,0 +1,24 @@
+# Recipe for the support classification adapter. hf_repo and hf_revision are
+# placeholders to replace with the real base.
+id: support-classification-lora
+base_model_id: small-specialist
+base_revision: mock-small@sha256:dev
+hf_repo: REPLACE_ME/small-specialist
+hf_revision: "0000000000000000000000000000000000000000"
+domain: support
+intended_tasks: [classification]
+method: lora
+framework: peft
+rank: 8
+alpha: 16
+dropout: 0.05
+target_modules: [q_proj, v_proj]
+dataset:
+  path: s3://llm-routing-artifacts/datasets/support-2026-04.jsonl
+  version: support-2026-04
+training:
+  epochs: 2
+  learning_rate: 0.0001
+  batch_size: 16
+  max_seq_length: 1024
+  seed: 7
