@@ -184,6 +184,15 @@ class LocalDown(MockInferenceBackend):
             raise self.error
         return BackendResult(text="from the provider", prompt_tokens=2, completion_tokens=3)
 
+    async def stream(
+        self, request: ChatCompletionRequest, decision: RouteDecision
+    ) -> AsyncIterator[str]:
+        self.served.append(decision.profile.id)
+        if decision.profile.local:
+            raise self.error
+        yield "from the "
+        yield "provider"
+
 
 def post(client: TestClient, **routing: object) -> Any:
     return client.post(
@@ -293,3 +302,92 @@ def test_each_target_has_its_own_circuit() -> None:
     assert second.json()["model"] == "approved-external-fallback"
     assert 'router_engine_circuit_open{engine="mock"} 1.0' in metrics
     assert 'router_engine_circuit_open{engine="external"} 0.0' in metrics
+
+
+def stream(client: TestClient, **routing: object) -> Any:
+    return client.post(
+        "/v1/chat/completions",
+        headers=HEADERS,
+        json={
+            "model": "auto",
+            "stream": True,
+            "messages": [{"role": "user", "content": "Analyze deeply"}],
+            "routing": routing,
+        },
+    )
+
+
+def test_a_stream_that_fails_before_its_first_token_falls_back_and_says_so() -> None:
+    backend = LocalDown(BackendUnavailableError("inference engine unreachable"))
+    with build(backend) as client:
+        response = stream(client, privacy="public", allow_external_fallback=True)
+        metrics = client.get("/metrics").text
+
+    assert response.status_code == 200
+    assert backend.served == ["high-capability", "approved-external-fallback"]
+    # The headers and every chunk name the model that actually answered.
+    assert response.headers["X-Route-Model"] == "approved-external-fallback"
+    assert "fell back from high-capability" in response.headers["X-Route-Reason"]
+    chunks = [
+        json.loads(line.removeprefix("data: "))
+        for line in response.text.splitlines()
+        if line.startswith("data: {")
+    ]
+    assert {chunk["model"] for chunk in chunks} == {"approved-external-fallback"}
+    assert "".join(chunk["choices"][0]["delta"].get("content", "") for chunk in chunks) == (
+        "from the provider"
+    )
+    assert 'router_fallbacks_total{cause="BackendUnavailableError"' in metrics
+    assert "router_inflight_requests 0.0" in metrics
+
+
+def test_a_stream_with_no_fallback_fails_with_a_real_status_and_frees_its_slot() -> None:
+    backend = LocalDown(BackendUnavailableError("inference engine unreachable"))
+    settings = Settings(api_keys="external-key", max_concurrency=1)
+    with TestClient(create_app(settings, backend=backend)) as client:
+        first = stream(client, privacy="private")
+        # The only slot was released, or this would be shed as overloaded.
+        second = stream(client, privacy="private")
+        metrics = client.get("/metrics").text
+
+    assert (first.status_code, second.status_code) == (502, 502)
+    assert first.headers["content-type"].startswith("application/json")
+    assert "router_inflight_requests 0.0" in metrics
+
+
+class DiesMidStream(MockInferenceBackend):
+    def __init__(self) -> None:
+        self.served: list[str] = []
+
+    async def stream(
+        self, request: ChatCompletionRequest, decision: RouteDecision
+    ) -> AsyncIterator[str]:
+        self.served.append(decision.profile.id)
+        yield "partial "
+        raise BackendUnavailableError("inference engine unreachable")
+
+
+def test_a_stream_that_fails_after_a_token_was_sent_does_not_switch_models() -> None:
+    backend = DiesMidStream()
+    with build(backend) as client:
+        with pytest.raises(RuntimeError, match="response already started"):
+            stream(client, privacy="public", allow_external_fallback=True)
+
+    # Tokens from one model are never continued by another.
+    assert backend.served == ["high-capability"]
+
+
+class Silent(MockInferenceBackend):
+    async def stream(
+        self, request: ChatCompletionRequest, decision: RouteDecision
+    ) -> AsyncIterator[str]:
+        return
+        yield ""  # pragma: no cover - makes this an async generator
+
+
+def test_a_stream_that_produces_nothing_still_ends_cleanly() -> None:
+    with build(Silent()) as client:
+        response = stream(client, privacy="public")
+
+    assert response.status_code == 200
+    assert response.text.rstrip().endswith("data: [DONE]")
