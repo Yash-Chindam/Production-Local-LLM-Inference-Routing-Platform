@@ -64,6 +64,11 @@ jobs:
         # One plan per track (model, adapter, policy), each naming what it
         # rolls back to and the criteria that trigger it.
         run: python -m llm_router.canary > canary-plan.json
+      - name: Render the governance plan
+        # What a sync would record in MLflow for this catalog: every model and
+        # adapter revision, its stage, and its benchmark evidence. Planned
+        # offline; syncing a live MLflow stays disabled with the rest of deploy.
+        run: python -m llm_router.governance plan > governance-plan.json
       - name: Validate the Kubernetes manifests
         run: |
           curl -sSLo kubeconform.tar.gz https://github.com/yannh/kubeconform/releases/download/v0.7.0/kubeconform-linux-amd64.tar.gz
@@ -74,6 +79,7 @@ jobs:
           name: deployment-plan-${{ env.RELEASE_REF }}
           path: |
             canary-plan.json
+            governance-plan.json
             config/ray-serve.yaml
             deploy/kubernetes
           retention-days: 14

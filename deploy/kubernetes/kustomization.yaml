@@ -9,4 +9,5 @@ resources:
   - state.yaml
   - network-policy.yaml
   - external-provider.yaml
+  - mlflow.yaml
   - observability.yaml

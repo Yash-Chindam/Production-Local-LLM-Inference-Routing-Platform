@@ -121,6 +121,37 @@ returns `502` with retry guidance, and `/readyz` fails while the engine is unhea
 Set `"stream": true` to receive OpenAI-compatible `text/event-stream` chunks. Streamed
 results are cached under the same eligibility rules and replayed as chunks on a hit.
 
+### External providers
+
+The gateway never talks to a provider. An approved external model is reached through a
+[LiteLLM](https://docs.litellm.ai/) proxy, configured in
+[`config/litellm.yaml`](config/litellm.yaml), so provider credentials stay out of the gateway and
+adding a provider does not change it. Every alias in that file must match a non-local model card
+in the catalog; a test fails if they drift. The provider model named there is a placeholder: pick
+the one your policy approves.
+
+A request reaches the proxy only when all of these hold:
+
+1. The operator has set `ROUTER_EXTERNAL_FALLBACK_ENABLED=true`. With `ROUTER_BACKEND=vllm` the
+   gateway refuses to start unless `ROUTER_EXTERNAL_BASE_URL` is also set.
+2. The effective privacy class is `public`, after any tenant floor has been applied.
+3. The request sets `routing.allow_external_fallback`, and the tenant does not forbid it.
+
+The rule is enforced twice. Routing never selects an external model for private or restricted
+data, and the dispatch boundary refuses to send it even if routing were wrong, answering `500`
+`policy_violation` and counting `router_rejections_total{reason="external_dispatch_refused"}`.
+
+An eligible request also falls back when the local engine fails with it: unreachable, out of
+memory, or circuit open. The response names the model that answered, its route reason says
+which model it fell back from, and `router_fallbacks_total` counts it by cause. A fallback
+response is cached under the model that produced it. The local engine and the proxy have separate
+circuits, so a failing engine does not close the path to the provider. Streamed requests do not
+fall back; they fail as described under [Failure behaviour](#failure-behaviour).
+
+In the cluster the proxy is the only workload allowed to reach the internet, and only the gateway
+may call it. This path has been tested against a stand-in transport, not against a running
+LiteLLM proxy or a real provider.
+
 ### Ray Serve deployment
 
 [`config/ray-serve.yaml`](config/ray-serve.yaml) is generated from the catalog, never
@@ -169,9 +200,9 @@ evidence, and no claim is made about what either gains.
 ## Deployment topology
 
 [`deploy/kubernetes`](deploy/kubernetes) holds the namespaced manifests: gateway
-Deployment and Service, GPU serving pool, Redis, KEDA autoscaling on queue depth and p95
-latency, a Prometheus `ServiceMonitor`, network policy, and credentials sourced from the
-cluster secret manager. No secret material is committed. Unit tests enforce the contract:
+Deployment and Service, GPU serving pool, Redis, the LiteLLM proxy, the MLflow server, KEDA
+autoscaling on queue depth and p95 latency, a Prometheus `ServiceMonitor`, network policy, and
+credentials sourced from the cluster secret manager. No secret material is committed. Unit tests enforce the contract:
 unprivileged workloads, digest-pinned images, bounded resources, real probes, GPU pool
 pinning, and `/metrics` reachable only from monitoring.
 
@@ -187,7 +218,8 @@ in-process and correct for a single replica only. Install the client with the ex
 python -m pip install -e ".[redis]"
 ```
 
-CD renders the canary plans (one per track, each with its rollback target), verifies
+CD renders the canary plans (one per track, each with its rollback target) and the governance
+plan, verifies
 `config/ray-serve.yaml` against the catalog, and validates the manifests with kubeconform.
 Applying to a cluster stays disabled until a deployment destination is configured.
 
@@ -216,6 +248,40 @@ be served. A request can never introduce a model path, revision, or adapter.
 Send `routing.domain` to request a domain adapter; the router applies the promoted adapter
 with the largest measured quality gain for that base revision and task, or none at all.
 
+### Governance in MLflow
+
+The catalog decides what is served; [MLflow](https://mlflow.org/docs/latest/) keeps the record.
+`llm_router.governance` syncs the catalog into an MLflow model registry and tracking store:
+
+| Catalog record | In MLflow |
+|---|---|
+| Model or adapter revision | One model version, tagged with its card (license, tier, hardware, limitations, base revision, dataset version), artifact location, and checksum. |
+| Lifecycle stage | A version tag, plus a `staging` or `production` alias, so `models:/general-local@production` resolves. |
+| Benchmark run | One run with its measurements as metrics and its dataset, workload, hardware, driver, and engine revision as parameters. |
+| Stage change | One appended run in the promotions experiment: from, to, commit, and policy version. |
+
+```bash
+python -m pip install -e ".[governance]"
+python -m llm_router.governance plan                      # what a first sync would record
+python -m llm_router.governance sync --tracking-uri "$MLFLOW_TRACKING_URI"
+python -m llm_router.governance verify --tracking-uri "$MLFLOW_TRACKING_URI"   # exit 3 on drift
+python -m llm_router.governance history --name general-local --tracking-uri "$MLFLOW_TRACKING_URI"
+```
+
+- Governance flows one way. The gateway never reads MLflow, so a stage changed by hand there
+  changes nothing in production; `verify` reports it and the next `sync` puts it back.
+- A revision is immutable. If a recorded revision turns up with a different checksum, the sync
+  is refused: a changed artifact needs a new revision.
+- A revision the catalog replaces or removes is retired to `deprecated`, never deleted, so the
+  rollback target stays on record.
+- Models registered in MLflow by anyone else are left alone.
+
+The sync records where an artifact belongs under `--artifact-root`; it does not upload weights.
+CD renders the plan as an artifact. Running `sync` against a live MLflow is part of the deploy
+step, which stays disabled until a destination is configured. The tests run against a real MLflow
+on SQLite; the server deployment in [`deploy/kubernetes/mlflow.yaml`](deploy/kubernetes/mlflow.yaml)
+has not been run on a cluster.
+
 ## Failure behaviour
 
 | Condition | What the gateway does |
@@ -231,8 +297,10 @@ An engine error body is inspected for an out-of-memory report and then discarded
 it can echo the prompt it rejected. `router_engine_circuit_open` reports 0 closed, 0.5 half-open,
 1 open.
 
-A request that fails is not retried on another model. Every local model shares the one engine a
-gateway faces, so a retry would meet the same failure; the caller is told when to come back.
+A request that fails is not retried on another local model. Every local model shares the one
+engine a gateway faces, so a retry would meet the same failure; the caller is told when to come
+back. The one exception is a request already entitled to the
+[external provider](#external-providers), which falls back to it.
 
 Cold start is measured, not assumed (see `router_model_load_seconds` below). Tiers that keep a
 warm replica never pay it on the request path. The high-capability tier scales to zero, so its
@@ -333,7 +401,8 @@ in-cluster scrapers can read it; restrict it with network policy rather than a b
 | `router_tokens_total` | Prompt and completion tokens per model. |
 | `router_inflight_requests` / `router_queued_requests` | Live capacity and queue depth. |
 | `router_routes_total` | Requests per route with task and privacy class. |
-| `router_external_fallback_total` | Fallback frequency. |
+| `router_external_fallback_total` | Requests answered by an external model. |
+| `router_fallbacks_total` | Fallbacks after a local engine failure, by cause and by the models fallen back from and to. |
 | `router_queue_delay_prediction_error_ms` | Predicted versus observed queue delay. |
 | `router_rejections_total` | Quota, overload, and policy rejections. |
 | `router_cache_events_total` | Cache lookups by cache and result. |
@@ -444,6 +513,8 @@ All settings use the `ROUTER_` prefix.
 | `ROUTER_ADMISSION_TIMEOUT_SECONDS` | `0.25` | Time allowed to wait for capacity. |
 | `ROUTER_QUOTA_REQUESTS_PER_MINUTE` | `120` | Per-token sliding-window quota. |
 | `ROUTER_EXTERNAL_FALLBACK_ENABLED` | `false` | Operator gate for external fallback. |
+| `ROUTER_EXTERNAL_BASE_URL` | _(empty)_ | LiteLLM proxy address; required with `vllm` when external fallback is enabled. |
+| `ROUTER_EXTERNAL_API_KEY` | _(empty)_ | Key the gateway presents to the proxy. |
 | `ROUTER_REDIS_URL` | _(empty)_ | Shared cache and quota state; in-process when empty. |
 | `ROUTER_TENANT_KEYS` | _(empty)_ | `tenant:key` bindings; bare `ROUTER_API_KEYS` keys use the default tenant. |
 | `ROUTER_OTLP_ENDPOINT` | _(empty)_ | OTLP/HTTP trace collector; tracing is a no-op when empty. |
