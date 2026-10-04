@@ -66,6 +66,8 @@ jobs:
         run: python -m llm_router.chart --check && helm lint deploy/helm/llm-routing
       - name: Package the Helm chart
         run: helm package deploy/helm/llm-routing --destination chart
+      - name: Verify every catalog adapter has a matching recipe
+        run: python -m llm_router.adapters check
       - name: Render the canary and rollback plans
         # One plan per track (model, adapter, policy), each naming what it
         # rolls back to and the criteria that trigger it.

@@ -310,6 +310,32 @@ be served. A request can never introduce a model path, revision, or adapter.
 Send `routing.domain` to request a domain adapter; the router applies the promoted adapter
 with the largest measured quality gain for that base revision and task, or none at all.
 
+### Adapter recipes
+
+Every adapter in the catalog has a recipe in [`config/adapters`](config/adapters): the base
+model commit it was trained from, the dataset version, and the LoRA hyperparameters. A recipe
+is what makes an adapter reproducible, so a catalog adapter without one fails the check.
+
+```bash
+python -m pip install -e ".[training]"     # PEFT; add ".[unsloth]" for Unsloth
+python -m llm_router.adapters check                                  # recipes agree with the catalog
+python -m llm_router.adapters plan claims-extraction-lora            # the arguments a run would get
+python -m llm_router.adapters train claims-extraction-lora --output ./out/claims
+python -m llm_router.adapters register claims-extraction-lora --output ./out/claims
+```
+
+- `method: lora` trains over the full-precision base; `method: qlora` loads the base in 4-bit.
+  `framework` selects PEFT or Unsloth, and both are given the same rank, alpha, target modules,
+  commit, and seed.
+- The base is pinned to a 40-character commit. A branch or tag is rejected, because it can move.
+- A rank above 32 is rejected: the serving configuration would not load it.
+- `register` runs the [artifact scan](#artifact-scanning) on the finished adapter and prints its
+  catalog entry. The entry starts in `development` with no measured gain, and its revision is the
+  artifact's digest. Promotion is a separate, reviewed change once a benchmark exists.
+
+Training has not been run: it needs a GPU. The recipes' `hf_repo` and `hf_revision` are
+placeholders, as the catalog's base models are mocks.
+
 ### Governance in MLflow
 
 The catalog decides what is served; [MLflow](https://mlflow.org/docs/latest/) keeps the record.

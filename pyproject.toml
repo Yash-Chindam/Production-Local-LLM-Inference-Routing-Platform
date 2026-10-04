@@ -27,6 +27,18 @@ governance = [
   "mlflow-skinny>=3.5,<4",
   "sqlalchemy>=2,<3",
 ]
+# Adapter training. Needs a GPU; nothing in the verification environment
+# installs it. Unsloth is an alternative trainer, installed separately.
+training = [
+  "accelerate>=1.0",
+  "bitsandbytes>=0.44",
+  "datasets>=3.0",
+  "peft>=0.13",
+  "transformers>=4.46",
+]
+unsloth = [
+  "unsloth",
+]
 tracing = [
   "opentelemetry-exporter-otlp-proto-http>=1.30,<2",
   "opentelemetry-sdk>=1.30,<2",
@@ -84,6 +96,13 @@ packages = ["llm_router"]
 # The redis extra is optional at runtime and is not installed in the default
 # verification environment; the client is used only behind the RedisLike protocol.
 module = ["redis.*"]
+ignore_missing_imports = true
+follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+# The training stack ships in optional extras and is imported only inside
+# the function that trains an adapter.
+module = ["datasets.*", "peft.*", "transformers.*", "unsloth.*"]
 ignore_missing_imports = true
 follow_imports = "skip"
 
