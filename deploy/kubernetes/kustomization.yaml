@@ -11,3 +11,13 @@ resources:
   - external-provider.yaml
   - mlflow.yaml
   - observability.yaml
+# Grafana's dashboard sidecar loads any ConfigMap carrying this label.
+configMapGenerator:
+  - name: llm-routing-dashboards
+    files:
+      - dashboards/gateway.json
+      - dashboards/serving.json
+    options:
+      disableNameSuffixHash: true
+      labels:
+        grafana_dashboard: "1"

@@ -1,0 +1,51 @@
+# Ray Serve control plane in place of the single engine Deployment.
+#
+# The base runs one vLLM engine, which can serve one model. This overlay swaps
+# it for a RayService with a head and one worker group per accelerator type,
+# so every local model in the catalog is served from its own GPU pool behind
+# one OpenAI-compatible endpoint. Requires the KubeRay operator.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../kubernetes
+  - ray-service.yaml
+  - network-policy.yaml
+  - monitoring.yaml
+patches:
+  - patch: |
+      $patch: delete
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: vllm-serve
+        namespace: llm-routing
+  - patch: |
+      $patch: delete
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: vllm-serve
+        namespace: llm-routing
+  - patch: |
+      $patch: delete
+      apiVersion: networking.k8s.io/v1
+      kind: NetworkPolicy
+      metadata:
+        name: vllm-serve
+        namespace: llm-routing
+  # KubeRay publishes the Serve endpoint as <RayService name>-serve-svc.
+  - patch: |
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: llm-gateway
+        namespace: llm-routing
+      spec:
+        template:
+          spec:
+            containers:
+              - name: gateway
+                env:
+                  - name: ROUTER_VLLM_BASE_URL
+                    value: http://llm-serve-serve-svc.llm-routing.svc.cluster.local:8000
+  - path: gateway-network-policy.patch.yaml

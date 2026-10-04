@@ -1,0 +1,43 @@
+# Values for the NVIDIA GPU Operator chart (nvidia/gpu-operator). The operator
+# is cluster-wide infrastructure, installed once and not part of this
+# platform's namespace:
+#
+#   helm upgrade --install gpu-operator nvidia/gpu-operator \
+#     --namespace gpu-operator --create-namespace \
+#     --values deploy/gpu-operator/values.yaml
+#
+# It supplies the three things the serving manifests rely on.
+
+# 1. The nvidia.com/gpu resource that engine and Ray worker pods request.
+driver:
+  enabled: true
+toolkit:
+  enabled: true
+devicePlugin:
+  enabled: true
+
+# 2. The nvidia.com/gpu.product node label that pins each pool to one
+#    accelerator type. Node feature discovery finds the hardware and GPU
+#    feature discovery turns it into the label.
+nfd:
+  enabled: true
+gfd:
+  enabled: true
+
+# 3. The GPU exporter. DCGM publishes the DCGM_FI_DEV_* series the dashboards
+#    and alerts read, and the ServiceMonitor hands them to Prometheus.
+dcgmExporter:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    interval: 15s
+    additionalLabels:
+      release: prometheus
+
+# GPU nodes are tainted so only inference lands on them; the operator's own
+# daemons have to tolerate that taint to run there at all.
+daemonsets:
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
