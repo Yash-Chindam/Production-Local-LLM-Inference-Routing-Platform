@@ -344,6 +344,40 @@ step, which stays disabled until a destination is configured. The tests run agai
 on SQLite; the server deployment in [`deploy/kubernetes/mlflow.yaml`](deploy/kubernetes/mlflow.yaml)
 has not been run on a cluster.
 
+## Artifact scanning
+
+Nothing is released without being scanned.
+
+**Container.** CI scans the release image with [Trivy](https://trivy.dev/) and fails on any
+critical or high vulnerability that has a fix, then starts the image and waits for `/healthz`.
+The image takes the distribution's security updates at build time and ships without `pip`, so
+the installer and the libraries it vendors are not there to be vulnerable.
+
+**Models and adapters.** Loading weights can run code: a pickle checkpoint executes what it
+names, and a repository that ships Python asks the loader to import it. `llm_router.artifact_scan`
+inspects an artifact directory without loading anything from it.
+
+```bash
+python -m llm_router.artifact_scan ./artifacts/general-local --subject general-local
+python -m llm_router.artifact_scan ./artifacts/claims-lora --kind adapter --expect sha256:...
+```
+
+| Rule | Refused |
+|---|---|
+| `pickle-format` | Any pickle-capable file (`.bin`, `.pt`, `.ckpt`, `.pkl`, ...), or a pickle under any other name. The finding names what it would import. |
+| `executable-code` | Python, shell, or native libraries inside the artifact. |
+| `remote-code` | A configuration with `auto_map` or `trust_remote_code`, or one that cannot be read. |
+| `invalid-safetensors` | A header that does not account for exactly the bytes in the file. |
+| `no-weights` | An artifact with no safetensors weights. |
+| `symlink` | A link pointing outside the artifact. |
+| `adapter-config` | An adapter that is not LoRA, or whose rank the engine would not load. |
+| `checksum-mismatch` | A digest other than the one the catalog records. |
+
+The digest covers every file's path and content, so it is the value to record as a checksum in
+a deployment revision. The command exits 1 on any finding. It checks formats and provenance; it
+does not judge what a model has learned. The catalog's checksums are placeholders, so no real
+artifact has been scanned against them yet.
+
 ## Failure behaviour
 
 | Condition | What the gateway does |
