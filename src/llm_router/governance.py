@@ -184,6 +184,7 @@ def _model_version(card: ModelCard, artifact_root: str, checksum: str | None) ->
                 f"{hardware.count}x {hardware.accelerator}, "
                 f"{hardware.minimum_memory_gb} GB, tensor parallel {hardware.tensor_parallel_size}"
             ),
+            "catalog.modalities": ",".join(sorted(item.value for item in card.modalities)),
             "catalog.supported_tasks": ",".join(
                 sorted(task.value for task in card.supported_tasks)
             ),

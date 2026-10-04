@@ -20,6 +20,15 @@ class PrivacyClass(StrEnum):
     RESTRICTED = "restricted"
 
 
+class Modality(StrEnum):
+    TEXT = "text"
+    IMAGE = "image"
+    AUDIO = "audio"
+
+
+TEXT_ONLY: frozenset[Modality] = frozenset({Modality.TEXT})
+
+
 class ChatMessage(BaseModel):
     role: Literal["system", "user", "assistant", "tool"]
     content: str
@@ -35,6 +44,9 @@ class RoutingOptions(BaseModel):
     # Declaring a structured-output requirement lets the gateway check the one
     # quality signal live traffic exposes: whether the response actually parsed.
     structured: bool = False
+    # Every input modality the request needs a model to accept. A model
+    # that lacks one is never a candidate, however it would have scored.
+    modalities: frozenset[Modality] = Field(default=TEXT_ONLY, min_length=1)
 
 
 class ChatCompletionRequest(BaseModel):
@@ -64,6 +76,7 @@ class ModelProfile(BaseModel):
     # `quality` figure is only the fallback for a task never measured.
     quality_by_task: dict[TaskClass, float] = Field(default_factory=dict)
     supports_structured_output: bool = True
+    modalities: frozenset[Modality] = TEXT_ONLY
 
     def quality_for(self, task: TaskClass) -> float:
         return self.quality_by_task.get(task, self.quality)

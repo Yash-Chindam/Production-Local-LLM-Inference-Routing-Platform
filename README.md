@@ -99,6 +99,7 @@ production prompts before relying on the numbers.
 | Routing feature | Source |
 |---|---|
 | Task and complexity | The classifier; `low` leaves work on the cheapest capable model, `high` outweighs the specialization and cost terms. |
+| Required modality | `routing.modalities` lists the inputs a request needs (`text`, `image`, `audio`); a model whose card does not list them all is never a candidate. |
 | Structured-output requirement | `routing.structured` excludes any model whose card sets `supports_structured_output: false`. |
 | Quality by task and model | Mean benchmarked quality for the task from the catalog; the card's headline `quality` only for a task never measured. |
 | Current queue delay | An exponentially weighted average of what requests for that model actually waited, replacing the catalog estimate after the first observation. |
@@ -106,7 +107,9 @@ production prompts before relying on the numbers.
 
 One gateway faces one engine, so saturation costs every local model equally: it can tip an
 eligible request to the approved external model, and it never reorders local models or overrides
-privacy. Required modality is not a routing feature yet; message content is text only.
+privacy. Modality is a routing restriction only: every model in the committed catalog is text-only
+and message content is text, so a request that requires `image` or `audio` is refused with `422`
+until a card declares that modality.
 
 Every response reports `task_source` (`declared`, `classifier`, `abstained`, `keyword`, or
 `cached`), `task_confidence`, and `complexity` beside the route reason.

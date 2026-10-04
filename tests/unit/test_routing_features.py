@@ -1,4 +1,5 @@
 import pytest
+from pydantic import ValidationError
 
 from llm_router.classifier import DEFAULT_DATASET, load_classifier
 from llm_router.engine_stats import EngineStats
@@ -221,3 +222,35 @@ def test_quality_history_is_built_from_benchmarks_per_task() -> None:
     assert profiles["small-specialist"].quality_for(TaskClass.EXTRACTION) == pytest.approx(0.82)
     # No benchmark covers this task, so the card's headline figure applies.
     assert profiles["small-specialist"].quality_for(TaskClass.CLASSIFICATION) == small.quality
+
+
+def test_a_request_never_reaches_a_model_that_lacks_a_modality_it_needs() -> None:
+    profiles = (
+        profile("text-only", quality=0.99),
+        profile("multimodal", quality=0.80, modalities=frozenset({"text", "image"})),
+    )
+    router = Router(profiles)
+
+    plain = router.select(request_for("Extract the fields"))
+    with_image = router.select(request_for("Extract the fields", modalities=["text", "image"]))
+
+    # The text-only model scores far higher, and still is not a candidate.
+    assert plain.profile.id == "text-only"
+    assert with_image.profile.id == "multimodal"
+
+
+def test_a_modality_no_model_accepts_is_refused_and_an_empty_requirement_is_invalid() -> None:
+    router = Router((profile("text-only"),))
+
+    with pytest.raises(NoEligibleModelError, match="modality"):
+        router.select(request_for("Transcribe this", modalities=["audio"]))
+    with pytest.raises(ValidationError):
+        request_for("Extract the fields", modalities=[])
+
+
+def test_the_catalog_carries_modality_from_the_card_to_the_router() -> None:
+    catalog = load_registry("config/registry.yaml")
+
+    assert all(item.modalities == {"text"} for item in catalog.profiles())
+    card = catalog.models[0].model_copy(update={"modalities": frozenset({"text", "image"})})
+    assert card.to_profile().modalities == {"text", "image"}
