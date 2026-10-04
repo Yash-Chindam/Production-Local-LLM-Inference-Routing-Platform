@@ -1,0 +1,181 @@
+# MLflow tracking server and model registry: the governance record of every
+# model and adapter revision, its benchmark evidence, and its promotions.
+# The gateway never reads it; the catalog shipped in the image decides what is
+# served. Only the delivery pipeline writes here, with
+# `python -m llm_router.governance sync`.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mlflow
+  namespace: llm-routing
+  labels:
+    app.kubernetes.io/name: mlflow
+    app.kubernetes.io/part-of: local-llm-router
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mlflow
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mlflow
+        app.kubernetes.io/part-of: local-llm-router
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: mlflow
+          image: ghcr.io/mlflow/mlflow@sha256:REPLACE_ME
+          imagePullPolicy: IfNotPresent
+          command: [mlflow, server]
+          args:
+            - --host=0.0.0.0
+            - --port=5000
+            # MLflow rejects requests whose Host header it does not expect.
+            - --allowed-hosts=mlflow.llm-routing.svc.cluster.local,mlflow.llm-routing.svc.cluster.local:5000
+            # Clients upload and download through the server, so object
+            # storage credentials stay here and are never handed to a client.
+            - --serve-artifacts
+            - --artifacts-destination=s3://llm-routing-artifacts
+          ports:
+            - name: http
+              containerPort: 5000
+          env:
+            # The database address carries its password, so the whole value
+            # comes from the secret manager.
+            - name: MLFLOW_BACKEND_STORE_URI
+              valueFrom:
+                secretKeyRef:
+                  name: mlflow-credentials
+                  key: backend-store-uri
+            - name: MLFLOW_S3_ENDPOINT_URL
+              value: http://object-storage.storage.svc.cluster.local:9000
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: mlflow-credentials
+                  key: artifact-access-key-id
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: mlflow-credentials
+                  key: artifact-secret-access-key
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 2Gi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      terminationGracePeriodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mlflow
+  namespace: llm-routing
+  labels:
+    app.kubernetes.io/name: mlflow
+spec:
+  selector:
+    app.kubernetes.io/name: mlflow
+  ports:
+    - name: http
+      port: 5000
+      targetPort: http
+---
+# Kept apart from the gateway's credentials: the gateway has no use for the
+# governance database or the artifact store, so it is never given either.
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: mlflow-credentials
+  namespace: llm-routing
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: platform-secret-store
+    kind: ClusterSecretStore
+  target:
+    name: mlflow-credentials
+  data:
+    - secretKey: backend-store-uri
+      remoteRef:
+        key: llm-routing/mlflow
+        property: backend_store_uri
+    - secretKey: artifact-access-key-id
+      remoteRef:
+        key: llm-routing/mlflow
+        property: artifact_access_key_id
+    - secretKey: artifact-secret-access-key
+      remoteRef:
+        key: llm-routing/mlflow
+        property: artifact_secret_access_key
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mlflow
+  namespace: llm-routing
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mlflow
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # The delivery pipeline syncs and verifies the catalog from here. No
+    # workload in this namespace, the gateway included, may reach MLflow.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: platform-delivery
+      ports:
+        - protocol: TCP
+          port: 5000
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # The backing database and the artifact object store, and nothing else.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: storage
+      ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 9000

@@ -46,6 +46,14 @@ WORKLOADS = [
 ]
 
 
+def external_secret_named(name: str) -> dict[str, Any]:
+    return next(
+        document
+        for document in DOCUMENTS
+        if document["kind"] == "ExternalSecret" and document["metadata"]["name"] == name
+    )
+
+
 def pod_spec(workload: dict[str, Any]) -> dict[str, Any]:
     spec: dict[str, Any] = workload["spec"]["template"]["spec"]
     return spec
@@ -104,9 +112,7 @@ def test_no_manifest_contains_secret_material() -> None:
 
 
 def test_gateway_reads_credentials_from_the_secret_manager() -> None:
-    external_secret = next(
-        document for document in DOCUMENTS if document["kind"] == "ExternalSecret"
-    )
+    external_secret = external_secret_named("llm-gateway-credentials")
     gateway = next(
         document for document in WORKLOADS if document["metadata"]["name"] == "llm-gateway"
     )
@@ -248,9 +254,7 @@ def test_only_the_gateway_reaches_the_proxy_and_only_the_proxy_reaches_out() -> 
 
 
 def test_the_proxy_reads_both_of_its_keys_from_the_secret_manager() -> None:
-    external_secret = next(
-        document for document in DOCUMENTS if document["kind"] == "ExternalSecret"
-    )
+    external_secret = external_secret_named("llm-gateway-credentials")
     proxy = next(
         document for document in WORKLOADS if document["metadata"]["name"] == "litellm-proxy"
     )
@@ -259,3 +263,68 @@ def test_the_proxy_reads_both_of_its_keys_from_the_secret_manager() -> None:
     for variable in pod_spec(proxy)["containers"][0]["env"]:
         assert "value" not in variable
         assert variable["valueFrom"]["secretKeyRef"]["key"] in provided
+
+
+def test_the_governance_store_is_reachable_only_by_the_delivery_pipeline() -> None:
+    policy = next(
+        document["spec"]
+        for document in DOCUMENTS
+        if document["kind"] == "NetworkPolicy" and document["metadata"]["name"] == "mlflow"
+    )
+
+    assert policy["ingress"] == [
+        {
+            "from": [
+                {
+                    "namespaceSelector": {
+                        "matchLabels": {"kubernetes.io/metadata.name": "platform-delivery"}
+                    }
+                }
+            ],
+            "ports": [{"protocol": "TCP", "port": 5000}],
+        }
+    ]
+    reachable = {
+        rule["namespaceSelector"]["matchLabels"]["kubernetes.io/metadata.name"]
+        for entry in policy["egress"]
+        for rule in entry["to"]
+    }
+    assert reachable == {"kube-system", "storage"}
+
+
+def test_the_governance_store_keeps_its_own_credentials_apart_from_the_gateway() -> None:
+    mlflow = next(document for document in WORKLOADS if document["metadata"]["name"] == "mlflow")
+    gateway = next(
+        document for document in WORKLOADS if document["metadata"]["name"] == "llm-gateway"
+    )
+    provided = {
+        item["secretKey"] for item in external_secret_named("mlflow-credentials")["spec"]["data"]
+    }
+
+    referenced = {
+        variable["valueFrom"]["secretKeyRef"]["key"]
+        for variable in pod_spec(mlflow)["containers"][0]["env"]
+        if "valueFrom" in variable
+    }
+    assert referenced == provided
+    # The database address embeds a password, so it may never be a literal.
+    backend = next(
+        variable
+        for variable in pod_spec(mlflow)["containers"][0]["env"]
+        if variable["name"] == "MLFLOW_BACKEND_STORE_URI"
+    )
+    assert "value" not in backend
+    gateway_secrets = {
+        variable["valueFrom"]["secretKeyRef"]["name"]
+        for variable in pod_spec(gateway)["containers"][0]["env"]
+        if "valueFrom" in variable
+    }
+    assert gateway_secrets == {"llm-gateway-credentials"}
+
+
+def test_artifacts_are_proxied_so_clients_never_hold_storage_credentials() -> None:
+    mlflow = next(document for document in WORKLOADS if document["metadata"]["name"] == "mlflow")
+    arguments = pod_spec(mlflow)["containers"][0]["args"]
+
+    assert "--serve-artifacts" in arguments
+    assert any(item.startswith("--artifacts-destination=s3://") for item in arguments)
