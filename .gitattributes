@@ -1,0 +1,3 @@
+# One line ending everywhere, so generated files compare equal on any platform.
+* text=auto eol=lf
+*.png binary

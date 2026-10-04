@@ -8,7 +8,6 @@ cannot drift from the manifests the contract tests check.
 """
 
 import re
-import tomllib
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -178,25 +177,23 @@ def _values(source_root: Path) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _chart_metadata(source_root: Path) -> str:
-    project = tomllib.loads((source_root / "pyproject.toml").read_text(encoding="utf-8"))
-    version = project["project"]["version"]
-    return (
-        "apiVersion: v2\n"
-        f"name: {CHART_NAME}\n"
-        "description: OpenAI-compatible gateway, policy router and local LLM serving plane.\n"
-        "type: application\n"
-        f"version: {version}\n"
-        f'appVersion: "{version}"\n'
-        'kubeVersion: ">=1.27.0-0"\n'
-    )
+CHART_METADATA = f"""apiVersion: v2
+name: {CHART_NAME}
+description: OpenAI-compatible gateway, policy router and local LLM serving plane.
+type: application
+# Set from the release tag when the chart is packaged:
+#   helm package --version <tag> --app-version <tag>
+version: 0.0.0
+appVersion: "0.0.0"
+kubeVersion: ">=1.27.0-0"
+"""
 
 
 def build_chart(source_root: Path = Path(".")) -> dict[str, str]:
     """Every file of the chart, keyed by its path inside the chart directory."""
 
     files = {
-        "Chart.yaml": _chart_metadata(source_root),
+        "Chart.yaml": CHART_METADATA,
         "values.yaml": _values(source_root),
         "templates/_helpers.tpl": HELPERS,
         "templates/dashboards.yaml": DASHBOARDS,

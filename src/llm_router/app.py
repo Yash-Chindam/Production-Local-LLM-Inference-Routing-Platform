@@ -14,6 +14,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, 
 from fastapi.responses import JSONResponse, StreamingResponse
 from opentelemetry.trace import TracerProvider
 
+from llm_router import __version__
 from llm_router.admission import (
     AdmissionController,
     AdmissionRejectedError,
@@ -259,7 +260,7 @@ def create_app(
 
     app = FastAPI(
         title="Local LLM Inference Router",
-        version="0.1.0",
+        version=__version__,
         lifespan=lifespan,
     )
 

@@ -1,6 +1,10 @@
 FROM python:3.13-slim AS builder
 
 WORKDIR /build
+# The build context carries no git history, so the release version is passed
+# in; without it the image reports 0.0.0 rather than guessing.
+ARG VERSION=0.0.0
+ENV SETUPTOOLS_SCM_PRETEND_VERSION=${VERSION}
 COPY pyproject.toml README.md ./
 COPY src ./src
 RUN python -m pip wheel --no-cache-dir --wheel-dir /wheels .
