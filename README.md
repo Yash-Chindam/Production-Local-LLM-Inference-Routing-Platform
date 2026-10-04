@@ -207,8 +207,45 @@ unprivileged workloads, digest-pinned images, bounded resources, real probes, GP
 pinning, and `/metrics` reachable only from monitoring.
 
 ```bash
-kubectl apply -k deploy/kubernetes
+kubectl apply -k deploy/kubernetes       # one vLLM engine
+kubectl apply -k deploy/overlays/ray     # Ray Serve across GPU pools
 ```
+
+The base runs a single vLLM engine, which serves one model. The
+[`deploy/overlays/ray`](deploy/overlays/ray) overlay replaces it with a KubeRay `RayService`
+that serves every local model in the catalog behind one OpenAI-compatible endpoint:
+
+- A head that schedules and never runs a model.
+- One worker group per accelerator type, pinned by `nvidia.com/gpu.product`, so GPU pools stay
+  separate. Each group is sized from the autoscaling bounds of the models placed on it, and a
+  worker holds as many GPUs as the largest replica on its pool needs.
+- Model weights are loaded from the location [governance](#governance-in-mlflow) records for
+  each revision.
+
+The `RayService` is generated from the catalog, never hand-edited, and verified by a test and
+by CD:
+
+```bash
+python -m llm_router.topology > deploy/overlays/ray/ray-service.yaml
+```
+
+Under the overlay, engine metrics are scraped from the Ray pods by Prometheus. The gateway
+cannot read a whole cluster from one address, so its own `router_engine_*` and `router_gpu_*`
+gauges stay empty there and live load does not influence routing.
+
+GPU support comes from the NVIDIA GPU Operator, installed cluster-wide with
+[`deploy/gpu-operator/values.yaml`](deploy/gpu-operator/values.yaml). It provides the
+`nvidia.com/gpu` resource, the node label the pools select on, and the DCGM GPU exporter.
+
+Two Grafana dashboards in [`deploy/kubernetes/dashboards`](deploy/kubernetes/dashboards) ship as
+a labelled ConfigMap for Grafana's sidecar: one for the gateway and router, one for engines and
+GPUs. A `PrometheusRule` alerts on latency, load shedding, a stuck queue, fallback rate, canary
+rollback, an open engine circuit, KV-cache pressure, and GPU memory. A test fails if a dashboard
+or alert queries a metric the gateway does not publish.
+
+None of this has been applied to a cluster. The manifests are schema-validated and
+contract-tested; the Ray image, GPU product labels, and node sizes are placeholders to set for
+the hardware you have.
 
 Stateless ingress scales separately from GPU replicas. Set `ROUTER_REDIS_URL` so cache and
 quota state are shared once the gateway runs more than one replica; without it both are
@@ -220,7 +257,8 @@ python -m pip install -e ".[redis]"
 
 CD renders the canary plans (one per track, each with its rollback target) and the governance
 plan, verifies
-`config/ray-serve.yaml` against the catalog, and validates the manifests with kubeconform.
+`config/ray-serve.yaml` and the Ray topology against the catalog, and validates both rendered
+topologies with kubeconform.
 Applying to a cluster stays disabled until a deployment destination is configured.
 
 ## Model registry

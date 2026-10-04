@@ -1,0 +1,65 @@
+# Ray head and workers. Inference traffic comes only from the gateway; the
+# cluster talks to itself freely; the operator drives it through the dashboard.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ray-serve
+  namespace: llm-routing
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: ray-serve
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: llm-gateway
+      ports:
+        - protocol: TCP
+          port: 8000
+    # Head and workers exchange control, object and worker traffic on ports
+    # Ray assigns at start-up, so the cluster is open to itself.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ray-serve
+    # KubeRay submits the Serve configuration and reads health here.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kuberay-system
+      ports:
+        - protocol: TCP
+          port: 8265
+        - protocol: TCP
+          port: 52365
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ray-serve
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Model and adapter artifacts, from the store governance records them in.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: storage
+      ports:
+        - protocol: TCP
+          port: 9000

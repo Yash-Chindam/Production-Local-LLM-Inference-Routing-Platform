@@ -1,0 +1,18 @@
+# Ray exports its own metrics and, with log_engine_metrics, each vLLM engine's
+# metrics on every head and worker pod. Under this overlay engine telemetry is
+# read from here by Prometheus; the gateway cannot scrape a whole cluster from
+# one address, so its own router_engine_* gauges stay empty.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: ray-serve
+  namespace: llm-routing
+  labels:
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ray-serve
+  podMetricsEndpoints:
+    - port: metrics
+      interval: 15s
