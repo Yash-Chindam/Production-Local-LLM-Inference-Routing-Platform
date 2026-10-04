@@ -9,14 +9,14 @@ description = "OpenAI-compatible gateway and policy router for local LLM inferen
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-  "fastapi>=0.141.1,<1",
+  "fastapi>=0.142.2,<1",
   "httpx>=0.28.1,<1",
-  "opentelemetry-api>=1.30,<2",
+  "opentelemetry-api>=1.45.0,<2",
   "prometheus-client>=0.26.0,<1",
   "pyyaml>=6.0.3,<7",
   "pydantic-settings>=2.15.0,<3",
-  "pyjwt[crypto]>=2.9,<3",
-  "uvicorn[standard]>=0.53.0,<1",
+  "pyjwt[crypto]>=2.15.1,<3",
+  "uvicorn[standard]>=0.54.0,<1",
 ]
 
 [project.optional-dependencies]
