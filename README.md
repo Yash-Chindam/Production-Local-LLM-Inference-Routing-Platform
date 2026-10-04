@@ -235,6 +235,9 @@ helm upgrade --install llm-routing deploy/helm/llm-routing \
 | `gateway.replicas` | `2` | Starting gateway size. |
 | `gateway.autoscaling.minReplicas` / `maxReplicas` | `2` / `20` | KEDA bounds. |
 
+Each GitHub release carries the chart packaged at that version. The chart in the repository
+has no version of its own: like the Python package, it takes the release tag.
+
 The chart is generated from the manifests and never edited by hand; tests check that it renders
 exactly what kustomize renders, in both modes.
 

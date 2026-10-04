@@ -28,10 +28,17 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ env.RELEASE_REF }}
+          fetch-depth: 0
+      - name: Describe the version being packaged
+        # The tag for this commit is cut after CD starts, so this is the last
+        # release plus the distance from it, which is what the commit is.
+        id: version
+        run: echo "version=$(git describe --tags --always | sed 's/^v//')" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@v4
       - uses: docker/build-push-action@v7
         with:
           context: .
+          build-args: VERSION=${{ steps.version.outputs.version }}
           outputs: type=oci,dest=${{ runner.temp }}/local-llm-router.tar
           tags: local-llm-router:${{ env.RELEASE_REF }}
       - uses: actions/upload-artifact@v7
@@ -65,6 +72,8 @@ jobs:
       - name: Verify the Helm chart matches the manifests
         run: python -m llm_router.chart --check && helm lint deploy/helm/llm-routing
       - name: Package the Helm chart
+        # The released chart, versioned by its tag, is attached to the GitHub
+        # release; this one is the unversioned build for inspection.
         run: helm package deploy/helm/llm-routing --destination chart
       - name: Verify every catalog adapter has a matching recipe
         run: python -m llm_router.adapters check

@@ -2,6 +2,8 @@ apiVersion: v2
 name: llm-routing
 description: OpenAI-compatible gateway, policy router and local LLM serving plane.
 type: application
-version: 0.1.0
-appVersion: "0.1.0"
+# Set from the release tag when the chart is packaged:
+#   helm package --version <tag> --app-version <tag>
+version: 0.0.0
+appVersion: "0.0.0"
 kubeVersion: ">=1.27.0-0"

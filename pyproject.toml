@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
 name = "local-llm-router"
-version = "0.1.0"
+dynamic = ["version"]
 description = "OpenAI-compatible gateway and policy router for local LLM inference."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -56,6 +56,16 @@ dev = [
   "sqlalchemy>=2,<3",
   "types-PyYAML>=6.0.12.20260906,<7",
 ]
+
+# The version is the release tag. Releases are tagged by the release workflow
+# after a merge, so no file in the repository has to be edited to cut one.
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.version.raw-options]
+local_scheme = "no-local-version"
+# Used when there is no git history to read, as in a source archive.
+fallback_version = "0.0.0"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/llm_router"]

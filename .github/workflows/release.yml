@@ -106,3 +106,14 @@ jobs:
             --title "$VERSION" \
             --target "$RELEASE_SHA" \
             --generate-notes
+
+      - name: Attach the Helm chart for this version
+        if: steps.version.outputs.bump != 'none'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          # The chart in the repository carries no version; the tag is the version.
+          helm package deploy/helm/llm-routing \
+            --version "${VERSION#v}" --app-version "${VERSION#v}" --destination dist
+          gh release upload "$VERSION" dist/*.tgz --repo "${{ github.repository }}" --clobber

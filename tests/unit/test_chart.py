@@ -42,6 +42,11 @@ def resources(rendered: str) -> dict[Key, dict[str, Any]]:
             # Kustomize moves a patched variable to the front; order means nothing.
             for container in document["spec"]["template"]["spec"]["containers"]:
                 container.get("env", []).sort(key=lambda item: item["name"])
+        if document["kind"] == "ConfigMap":
+            # A Windows checkout may hold the same file with different line endings.
+            document["data"] = {
+                name: content.replace("\r\n", "\n") for name, content in document["data"].items()
+            }
         found[document["kind"], document["metadata"]["name"]] = document
     return found
 
