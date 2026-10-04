@@ -13,7 +13,7 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, Field, model_validator
 
-from llm_router.models import ModelProfile, PrivacyClass, TaskClass
+from llm_router.models import TEXT_ONLY, Modality, ModelProfile, PrivacyClass, TaskClass
 
 # Privacy classes are ordered so a tenant floor can be compared with what a
 # request declared; a floor may only ever raise the effective class.
@@ -77,6 +77,8 @@ class ModelCard(BaseModel):
     stage: LifecycleStage = LifecycleStage.DEVELOPMENT
     healthy: bool = True
     supports_structured_output: bool = True
+    # Input modalities the model accepts; text unless the card says more.
+    modalities: frozenset[Modality] = Field(default=TEXT_ONLY, min_length=1)
     intended_tasks: str
     limitations: str
     evaluation_references: tuple[str, ...] = ()
@@ -91,6 +93,7 @@ class ModelCard(BaseModel):
         return ModelProfile(
             quality_by_task=quality_by_task or {},
             supports_structured_output=self.supports_structured_output,
+            modalities=self.modalities,
             id=self.id,
             revision=self.revision,
             local=self.local,

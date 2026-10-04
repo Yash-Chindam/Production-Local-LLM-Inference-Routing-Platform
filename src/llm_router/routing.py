@@ -167,6 +167,9 @@ class Router:
             # cannot produce structured output is never a candidate for a
             # request that requires it, whatever it would have scored.
             and (not request.routing.structured or profile.supports_structured_output)
+            # Likewise for modality: a model that cannot take an input the
+            # request carries cannot answer it at all.
+            and request.routing.modalities <= profile.modalities
             and self._privacy_allows(profile, effective_privacy)
             and self._external_allows(profile, request, tenant_allows_external)
             # A tenant entitlement is a hard restriction, like privacy: it is
@@ -182,8 +185,8 @@ class Router:
 
         if not candidates:
             raise NoEligibleModelError(
-                "no healthy model satisfies capability, structured output, context, quality, "
-                "privacy, tenant entitlement, and fallback policy"
+                "no healthy model satisfies capability, modality, structured output, context, "
+                "quality, privacy, tenant entitlement, and fallback policy"
             )
 
         saturation = self.load.engine_saturation() if self.load is not None else 0.0
