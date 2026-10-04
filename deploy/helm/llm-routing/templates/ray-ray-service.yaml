@@ -1,0 +1,388 @@
+{{- if eq .Values.serving.mode "ray" }}
+# Generated from config/registry.yaml by `python -m llm_router.topology`.
+# Do not edit: change the catalog and regenerate. A test and CD both fail on drift.
+apiVersion: ray.io/v1
+kind: RayService
+metadata:
+  name: llm-serve
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/part-of: local-llm-router
+  annotations:
+    llm-routing/policy-version: v1
+spec:
+  serveConfigV2: |
+    applications:
+    - name: llm_app
+      route_prefix: /
+      import_path: ray.serve.llm:build_openai_app
+      args:
+        llm_configs:
+        - model_loading_config:
+            model_id: small-specialist
+            model_source: s3://llm-routing-artifacts/models/small-specialist/mock-small-sha256-dev
+          accelerator_type: L4
+          deployment_config:
+            autoscaling_config:
+              min_replicas: 1
+              max_replicas: 4
+              target_ongoing_requests: 8
+              upscale_delay_s: 10
+              downscale_delay_s: 300
+            max_ongoing_requests: 16
+            ray_actor_options:
+              num_gpus: 1
+              resources:
+                gpu_pool_nvidia-l4: 0.001
+          engine_kwargs:
+            max_model_len: 8192
+            tensor_parallel_size: 1
+            enable_prefix_caching: true
+            enable_chunked_prefill: true
+            quantization: awq
+            enable_lora: true
+            max_loras: 3
+            max_lora_rank: 32
+          log_engine_metrics: true
+          lora_config:
+            dynamic_lora_loading_path: s3://llm-routing-artifacts/adapters
+            max_num_adapters_per_replica: 3
+        - model_loading_config:
+            model_id: general-local
+            model_source: s3://llm-routing-artifacts/models/general-local/mock-general-sha256-dev
+          accelerator_type: A10G
+          deployment_config:
+            autoscaling_config:
+              min_replicas: 1
+              max_replicas: 4
+              target_ongoing_requests: 8
+              upscale_delay_s: 10
+              downscale_delay_s: 300
+            max_ongoing_requests: 16
+            ray_actor_options:
+              num_gpus: 1
+              resources:
+                gpu_pool_nvidia-a10g: 0.001
+          engine_kwargs:
+            max_model_len: 32768
+            tensor_parallel_size: 1
+            enable_prefix_caching: true
+            enable_chunked_prefill: true
+          log_engine_metrics: true
+        - model_loading_config:
+            model_id: high-capability
+            model_source: s3://llm-routing-artifacts/models/high-capability/mock-high-sha256-dev
+          accelerator_type: A100
+          deployment_config:
+            autoscaling_config:
+              min_replicas: 0
+              max_replicas: 2
+              target_ongoing_requests: 8
+              upscale_delay_s: 10
+              downscale_delay_s: 60
+            max_ongoing_requests: 16
+            ray_actor_options:
+              num_gpus: 2
+              resources:
+                gpu_pool_nvidia-a100: 0.001
+          engine_kwargs:
+            max_model_len: 65536
+            tensor_parallel_size: 2
+            enable_prefix_caching: true
+            enable_chunked_prefill: true
+          log_engine_metrics: true
+        - model_loading_config:
+            model_id: general-local--general-gptq
+            model_source: s3://llm-routing-artifacts/models/general-local/mock-general-sha256-dev
+          accelerator_type: A10G
+          deployment_config:
+            autoscaling_config:
+              min_replicas: 0
+              max_replicas: 1
+            ray_actor_options:
+              num_gpus: 1
+              resources:
+                gpu_pool_nvidia-a10g: 0.001
+          engine_kwargs:
+            max_model_len: 32768
+            tensor_parallel_size: 1
+            enable_prefix_caching: true
+            enable_chunked_prefill: true
+            quantization: gptq
+          log_engine_metrics: true
+        - model_loading_config:
+            model_id: high-capability--high-capability-speculative
+            model_source: s3://llm-routing-artifacts/models/high-capability/mock-high-sha256-dev
+          accelerator_type: A100
+          deployment_config:
+            autoscaling_config:
+              min_replicas: 0
+              max_replicas: 1
+            ray_actor_options:
+              num_gpus: 2
+              resources:
+                gpu_pool_nvidia-a100: 0.001
+          engine_kwargs:
+            max_model_len: 65536
+            tensor_parallel_size: 2
+            enable_prefix_caching: true
+            enable_chunked_prefill: true
+            speculative_config:
+              model: s3://llm-routing-artifacts/models/small-specialist/mock-small-sha256-dev
+              num_speculative_tokens: 5
+          log_engine_metrics: true
+  rayClusterConfig:
+    rayVersion: 2.51.0
+    enableInTreeAutoscaling: true
+    headGroupSpec:
+      rayStartParams:
+        dashboard-host: 0.0.0.0
+        metrics-export-port: '8080'
+        num-cpus: '0'
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: ray-serve
+            app.kubernetes.io/part-of: local-llm-router
+        spec:
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+          - name: ray-head
+            image: {{ .Values.images.ray | quote }}
+            imagePullPolicy: IfNotPresent
+            ports:
+            - name: metrics
+              containerPort: 8080
+            - name: gcs
+              containerPort: 6379
+            - name: dashboard
+              containerPort: 8265
+            - name: serve
+              containerPort: 8000
+            securityContext:
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              capabilities:
+                drop:
+                - ALL
+            resources:
+              requests:
+                cpu: '2'
+                memory: 8Gi
+              limits:
+                cpu: '2'
+                memory: 8Gi
+            volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: cache
+              mountPath: /home/ray/.cache
+            - name: shm
+              mountPath: /dev/shm
+          volumes:
+          - name: tmp
+            emptyDir: {}
+          - name: cache
+            emptyDir: {}
+          - name: shm
+            emptyDir:
+              medium: Memory
+          terminationGracePeriodSeconds: 60
+    workerGroupSpecs:
+    - groupName: a100-pool
+      replicas: 0
+      minReplicas: 0
+      maxReplicas: 3
+      rayStartParams:
+        metrics-export-port: '8080'
+        resources: '"{\"gpu_pool_nvidia-a100\": 1}"'
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: ray-serve
+            app.kubernetes.io/part-of: local-llm-router
+        spec:
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+          - name: ray-worker
+            image: {{ .Values.images.ray | quote }}
+            imagePullPolicy: IfNotPresent
+            ports:
+            - name: metrics
+              containerPort: 8080
+            - name: serve
+              containerPort: 8000
+            securityContext:
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              capabilities:
+                drop:
+                - ALL
+            resources:
+              requests:
+                cpu: '8'
+                memory: 160Gi
+                nvidia.com/gpu: '2'
+              limits:
+                cpu: '8'
+                memory: 160Gi
+                nvidia.com/gpu: '2'
+            volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: cache
+              mountPath: /home/ray/.cache
+            - name: shm
+              mountPath: /dev/shm
+          volumes:
+          - name: tmp
+            emptyDir: {}
+          - name: cache
+            emptyDir: {}
+          - name: shm
+            emptyDir:
+              medium: Memory
+          terminationGracePeriodSeconds: 120
+          nodeSelector:
+            nvidia.com/gpu.product: NVIDIA-A100-SXM4-80GB
+          tolerations:
+          - key: nvidia.com/gpu
+            operator: Exists
+            effect: NoSchedule
+    - groupName: a10g-pool
+      replicas: 1
+      minReplicas: 1
+      maxReplicas: 5
+      rayStartParams:
+        metrics-export-port: '8080'
+        resources: '"{\"gpu_pool_nvidia-a10g\": 1}"'
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: ray-serve
+            app.kubernetes.io/part-of: local-llm-router
+        spec:
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+          - name: ray-worker
+            image: {{ .Values.images.ray | quote }}
+            imagePullPolicy: IfNotPresent
+            ports:
+            - name: metrics
+              containerPort: 8080
+            - name: serve
+              containerPort: 8000
+            securityContext:
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              capabilities:
+                drop:
+                - ALL
+            resources:
+              requests:
+                cpu: '4'
+                memory: 48Gi
+                nvidia.com/gpu: '1'
+              limits:
+                cpu: '4'
+                memory: 48Gi
+                nvidia.com/gpu: '1'
+            volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: cache
+              mountPath: /home/ray/.cache
+            - name: shm
+              mountPath: /dev/shm
+          volumes:
+          - name: tmp
+            emptyDir: {}
+          - name: cache
+            emptyDir: {}
+          - name: shm
+            emptyDir:
+              medium: Memory
+          terminationGracePeriodSeconds: 120
+          nodeSelector:
+            nvidia.com/gpu.product: NVIDIA-A10G
+          tolerations:
+          - key: nvidia.com/gpu
+            operator: Exists
+            effect: NoSchedule
+    - groupName: l4-pool
+      replicas: 1
+      minReplicas: 1
+      maxReplicas: 4
+      rayStartParams:
+        metrics-export-port: '8080'
+        resources: '"{\"gpu_pool_nvidia-l4\": 1}"'
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: ray-serve
+            app.kubernetes.io/part-of: local-llm-router
+        spec:
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+          - name: ray-worker
+            image: {{ .Values.images.ray | quote }}
+            imagePullPolicy: IfNotPresent
+            ports:
+            - name: metrics
+              containerPort: 8080
+            - name: serve
+              containerPort: 8000
+            securityContext:
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              capabilities:
+                drop:
+                - ALL
+            resources:
+              requests:
+                cpu: '4'
+                memory: 24Gi
+                nvidia.com/gpu: '1'
+              limits:
+                cpu: '4'
+                memory: 24Gi
+                nvidia.com/gpu: '1'
+            volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: cache
+              mountPath: /home/ray/.cache
+            - name: shm
+              mountPath: /dev/shm
+          volumes:
+          - name: tmp
+            emptyDir: {}
+          - name: cache
+            emptyDir: {}
+          - name: shm
+            emptyDir:
+              medium: Memory
+          terminationGracePeriodSeconds: 120
+          nodeSelector:
+            nvidia.com/gpu.product: NVIDIA-L4
+          tolerations:
+          - key: nvidia.com/gpu
+            operator: Exists
+            effect: NoSchedule
+{{- end }}

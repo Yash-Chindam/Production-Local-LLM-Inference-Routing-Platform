@@ -1,0 +1,87 @@
+# Metrics are unauthenticated by design and reachable only from monitoring.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: llm-gateway
+  namespace: {{ .Release.Namespace }}
+  labels:
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: llm-gateway
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
+---
+# Alerts on the conditions the platform promises to make visible: overload,
+# an open engine circuit, a canary that rolled back, and a GPU out of memory.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: llm-routing
+  namespace: {{ .Release.Namespace }}
+  labels:
+    release: prometheus
+spec:
+  groups:
+    - name: llm-routing.gateway
+      rules:
+        - alert: GatewayLatencyHigh
+          expr: histogram_quantile(0.95, sum by (le, model) (rate(router_request_latency_seconds_bucket[5m]))) > 5
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: p95 latency for {{ "{{" }} $labels.model }} has been above 5s for 10 minutes.
+        - alert: GatewayRejectingRequests
+          expr: sum by (type) (rate(router_rejections_total{type=~"overloaded|engine_unavailable"}[5m])) > 1
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: The gateway is shedding load ({{ "{{" }} $labels.type }}).
+        - alert: GatewayQueueNotDraining
+          expr: sum(router_queued_requests) > 16
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: Requests have been queueing for admission for 10 minutes.
+        - alert: CanaryRolledBack
+          expr: increase(router_canary_rollbacks_total[15m]) > 0
+          labels:
+            severity: warning
+          annotations:
+            summary: The canary for {{ "{{" }} $labels.subject }} failed its criteria and was rolled back.
+        - alert: FallbackRateHigh
+          expr: sum(rate(router_fallbacks_total[10m])) / sum(rate(router_requests_total[10m])) > 0.05
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: More than 5% of requests are being answered by a fallback model.
+    - name: llm-routing.serving
+      rules:
+        - alert: EngineCircuitOpen
+          expr: max by (engine) (router_engine_circuit_open) == 1
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: The circuit for engine {{ "{{" }} $labels.engine }} is open; requests to it are failing fast.
+        - alert: KVCacheNearlyFull
+          expr: max by (engine) (router_engine_kv_cache_occupancy_ratio) > 0.95
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: KV-cache occupancy on {{ "{{" }} $labels.engine }} has been above 95% for 10 minutes.
+        - alert: GPUMemoryNearlyFull
+          expr: DCGM_FI_DEV_FB_USED / (DCGM_FI_DEV_FB_USED + DCGM_FI_DEV_FB_FREE) > 0.97
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: GPU {{ "{{" }} $labels.gpu }} on {{ "{{" }} $labels.Hostname }} is nearly out of memory.

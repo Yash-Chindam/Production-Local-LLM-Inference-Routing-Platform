@@ -1,0 +1,317 @@
+{
+  "uid": "llm-routing-serving",
+  "title": "LLM routing: engines and GPUs",
+  "tags": [
+    "llm-routing"
+  ],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "refresh": "30s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "label": "Data source"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Engine running and waiting requests",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (engine) (router_engine_running_requests)",
+          "legendFormat": "running {{engine}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (engine) (router_engine_waiting_requests)",
+          "legendFormat": "waiting {{engine}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Engine batch size",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "avg by (engine) (router_engine_batch_size)",
+          "legendFormat": "{{engine}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "KV-cache occupancy",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by (engine) (router_engine_kv_cache_occupancy_ratio)",
+          "legendFormat": "{{engine}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Engine preemptions",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (engine) (rate(router_engine_preemptions_total[5m]))",
+          "legendFormat": "{{engine}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Engine circuit state (0 closed, 0.5 half-open, 1 open)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by (engine) (router_engine_circuit_open)",
+          "legendFormat": "{{engine}}"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Model load and cold start (p95)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le, model) (rate(router_model_load_seconds_bucket[5m])))",
+          "legendFormat": "{{model}}"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "GPU utilization as seen by the gateway",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 24
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "avg by (gpu) (router_gpu_utilization_ratio)",
+          "legendFormat": "gpu {{gpu}}"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "GPU memory as seen by the gateway",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 24
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (gpu) (router_gpu_memory_used_bytes) / sum by (gpu) (router_gpu_memory_total_bytes)",
+          "legendFormat": "gpu {{gpu}}"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "GPU utilization by node (DCGM exporter)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 32
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "avg by (Hostname, gpu) (DCGM_FI_DEV_GPU_UTIL)",
+          "legendFormat": "{{Hostname}} gpu {{gpu}}"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "GPU memory by node (DCGM exporter)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 32
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "decmbytes"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (Hostname, gpu) (DCGM_FI_DEV_FB_USED)",
+          "legendFormat": "used {{Hostname}} gpu {{gpu}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (Hostname, gpu) (DCGM_FI_DEV_FB_FREE)",
+          "legendFormat": "free {{Hostname}} gpu {{gpu}}"
+        }
+      ]
+    }
+  ]
+}

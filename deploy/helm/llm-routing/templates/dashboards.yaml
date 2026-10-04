@@ -1,0 +1,13 @@
+{{- include "llm-routing.validate" . -}}
+# Grafana's dashboard sidecar loads any ConfigMap carrying this label.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: llm-routing-dashboards
+  namespace: {{ .Release.Namespace }}
+  labels:
+    grafana_dashboard: "1"
+data:
+{{- range $path, $_ := .Files.Glob "dashboards/*.json" }}
+  {{ base $path }}: {{ $.Files.Get $path | quote }}
+{{- end }}

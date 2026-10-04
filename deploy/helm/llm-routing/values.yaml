@@ -1,0 +1,23 @@
+# Which serving topology to run.
+#   vllm: one vLLM engine, serving one model.
+#   ray:  a KubeRay RayService serving every local model in the catalog from
+#         worker pools split by accelerator type. Needs the KubeRay operator.
+serving:
+  mode: vllm
+
+# Every image is pinned by digest. Replace each placeholder with the digest
+# recorded for the release; a tag alone is refused by the contract tests.
+images:
+  gateway: ghcr.io/REPLACE_ME/local-llm-router@sha256:REPLACE_ME
+  engine: docker.io/vllm/vllm-openai@sha256:REPLACE_ME
+  ray: docker.io/rayproject/ray-llm@sha256:REPLACE_ME
+  redis: docker.io/library/redis@sha256:REPLACE_ME
+  externalProxy: ghcr.io/berriai/litellm@sha256:REPLACE_ME
+  mlflow: ghcr.io/mlflow/mlflow@sha256:REPLACE_ME
+
+gateway:
+  # Starting size; the KEDA ScaledObject takes over within the bounds below.
+  replicas: 2
+  autoscaling:
+    minReplicas: 2
+    maxReplicas: 20
