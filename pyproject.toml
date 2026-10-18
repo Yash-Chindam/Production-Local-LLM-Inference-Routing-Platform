@@ -25,7 +25,7 @@ redis = [
 ]
 governance = [
   "alembic>=1.20.0,<2",
-  "mlflow-skinny>=3.17.0,<4",
+  "mlflow-skinny>=3.17.1,<4",
   "sqlalchemy>=2.1.4,<3",
 ]
 # Adapter training. Needs a GPU; nothing in the verification environment
@@ -35,7 +35,7 @@ training = [
   "bitsandbytes>=0.50.2",
   "datasets>=5.1.0",
   "peft>=0.21.2",
-  "transformers>=5.19.0",
+  "transformers>=5.20.0",
 ]
 unsloth = [
   "unsloth",
@@ -46,13 +46,13 @@ tracing = [
 ]
 dev = [
   "alembic>=1.20.0,<2",
-  "mlflow-skinny>=3.17.0,<4",
+  "mlflow-skinny>=3.17.1,<4",
   "mypy>=2.4.0,<3",
   "opentelemetry-sdk>=1.45.1,<2",
   "pytest>=9.1.1,<10",
   "pytest-asyncio>=1.4.0,<2",
   "pytest-cov>=7.1.0,<8",
-  "ruff>=0.16.10,<1",
+  "ruff>=0.17.1,<1",
   "sqlalchemy>=2.1.4,<3",
   "types-PyYAML>=6.0.12.20260906,<7",
 ]
